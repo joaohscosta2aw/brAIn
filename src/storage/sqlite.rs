@@ -362,6 +362,18 @@ impl Store for SqliteStore {
         Ok(())
     }
 
+    fn ultimo_consumo_importado(&self, provider_id: &str) -> Result<Option<Instante>> {
+        self.conn()
+            .query_row(
+                "SELECT MAX(occurred_at) FROM usage_record WHERE provider_id = ?1",
+                params![provider_id],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .optional()
+            .map_err(|e| StorageError::Backend(e.to_string()))
+            .map(|r| r.flatten().map(Instante))
+    }
+
     fn preco_vigente(&self, model: &str, em: Instante) -> Result<Option<EntradaCatalogo>> {
         self.conn()
             .query_row(

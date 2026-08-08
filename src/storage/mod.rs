@@ -144,6 +144,11 @@ pub trait Store {
     /// Revisões registradas para um `usage_record`, mais recente primeiro.
     fn historico(&self, usage_record_id: &str) -> Result<Vec<Revisao>>;
 
+    /// Instante do consumo mais recente já importado de um provider.
+    /// `None` se nada foi importado ainda. Usado para importar apenas o
+    /// período ainda não coberto (task 5.5).
+    fn ultimo_consumo_importado(&self, provider_id: &str) -> Result<Option<Instante>>;
+
     /// Consumo sem cliente no período. Vazio quando o ledger está íntegro
     /// (spec: "o resultado é vazio... nenhum alarme").
     fn nao_atribuidos(&self, periodo: Periodo) -> Result<Vec<UsageRecord>>;

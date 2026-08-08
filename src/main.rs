@@ -6,6 +6,7 @@
 
 pub mod custo;
 pub mod domain;
+pub mod importacao;
 pub mod storage;
 
 fn main() {

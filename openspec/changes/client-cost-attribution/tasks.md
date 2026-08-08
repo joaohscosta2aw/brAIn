@@ -44,12 +44,12 @@ Depende de 2.
 
 Depende de 2 e 4.
 
-- [ ] 5.1 Definir a trait de coleta em que cada adapter declara seu tier de integração (D-4) e quais campos fornece
-- [ ] 5.2 Implementar deduplicação por identificador estável do provider quando disponível
-- [ ] 5.3 Implementar o fallback de impressão digital (provider, modelo, instante, tokens, referência de sessão) e declarar tier degradado quando nenhum sinal estiver disponível
-- [ ] 5.4 Garantir idempotência: reimportar janela já coberta não cria duplicata nem altera totais
-- [ ] 5.5 Importar apenas o período ainda não coberto quando a janela é parcialmente conhecida
-- [ ] 5.6 Isolar falha por provider: fonte indisponível reporta o provider afetado e não impede a importação dos demais
+- [x] 5.1 Definir a trait de coleta em que cada adapter declara seu tier de integração (D-4) e quais campos fornece
+- [x] 5.2 Implementar deduplicação por identificador estável do provider quando disponível
+- [x] 5.3 Implementar o fallback de impressão digital (provider, modelo, instante, tokens, referência de sessão) e declarar tier degradado quando nenhum sinal estiver disponível (tier degradado é o adapter reportar `campos_disponiveis()` vazio — task 6.7 usa isso)
+- [x] 5.4 Garantir idempotência: reimportar janela já coberta não cria duplicata nem altera totais
+- [x] 5.5 Importar apenas o período ainda não coberto quando a janela é parcialmente conhecida
+- [x] 5.6 Isolar falha por provider: fonte indisponível reporta o provider afetado e não impede a importação dos demais
 
 ## 6. Adapters de provider
 
