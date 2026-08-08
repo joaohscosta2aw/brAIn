@@ -7,6 +7,7 @@
 //! qualquer conteúdo de conversa.
 
 pub mod claude;
+pub mod grok;
 
 /// Estado de cobertura de um provider — task 6.7. Três estados, nunca dois:
 /// `NaoTentado` e `SemFonteUtilizavel` parecem a mesma coisa de longe, mas não
@@ -56,13 +57,7 @@ pub fn cobertura_v0_0() -> Vec<CoberturaProvider> {
         },
         CoberturaProvider {
             provider_id: "grok",
-            status: StatusCobertura::NaoTentado {
-                motivo: "CLI presente e headless JSON funcional, mas sem histórico \
-                         consultável nesse tier — só devolve o resultado de uma \
-                         chamada ao vivo. Uso histórico só existe em arquivo de \
-                         sessão, ainda não implementado para este provider"
-                    .into(),
-            },
+            status: StatusCobertura::Verificado,
         },
         CoberturaProvider {
             provider_id: "zcode",
