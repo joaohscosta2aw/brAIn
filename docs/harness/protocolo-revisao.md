@@ -10,7 +10,7 @@ implementou não é revisor final do próprio trabalho.
 Nesta ordem, porque cada camada barata elimina trabalho da seguinte.
 
 1. **Verificações determinísticas** — `cargo build`, `cargo fmt --check`,
-   `cargo clippy -- -D warnings`, `cargo test` e
+   `cargo clippy --all-targets -- -D warnings`, `cargo test` e
    `./scripts/verificar-invariantes.sh`. Comandos canônicos em
    `docs/harness/ambiente.md`.
 2. **Aderência ao OpenSpec** — cada cenário do spec tem comportamento

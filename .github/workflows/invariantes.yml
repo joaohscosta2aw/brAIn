@@ -25,6 +25,9 @@ jobs:
       - name: Verificar invariantes
         run: ./scripts/verificar-invariantes.sh
 
+      - name: Meta-teste do guard (task 8.7)
+        run: ./scripts/testar-verificar-invariantes.sh
+
   rust:
     runs-on: ubuntu-latest
     steps:
@@ -48,7 +51,7 @@ jobs:
 
       - name: Lint
         if: steps.existe.outputs.sim == 'true'
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Testes
         if: steps.existe.outputs.sim == 'true'

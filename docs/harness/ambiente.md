@@ -32,7 +32,7 @@ Todos passam a existir com a task 1.1.
 |---|---|
 | Compilar | `cargo build` |
 | Testar | `cargo test` |
-| Lint | `cargo clippy -- -D warnings` |
+| Lint | `cargo clippy --all-targets -- -D warnings` |
 | Formatar | `cargo fmt` |
 | Verificar formatação sem alterar | `cargo fmt --check` |
 | Validar a especificação | `openspec validate --strict` |
