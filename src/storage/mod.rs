@@ -88,6 +88,15 @@ pub struct ViolacaoIntegridade {
     pub descricao: String,
 }
 
+/// Uma revisão registrada de um campo de `usage_record` (D-14: correção
+/// supersede, não sobrescreve sem rastro).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Revisao {
+    pub campo: String,
+    pub valor_anterior: Option<String>,
+    pub revisado_em: Instante,
+}
+
 /// Recorte de tempo meio-aberto: `[desde, ate)`. `ate = None` significa "até
 /// agora".
 #[derive(Debug, Clone, Copy)]
@@ -118,12 +127,22 @@ pub trait Store {
     /// idempotente).
     fn gravar_consumo(&self, novo: NovoConsumo) -> Result<UsageRecord>;
 
-    /// Atribui um registro não-atribuído a um cliente existente.
+    /// Atribui (ou reatribui) um registro a um cliente existente. A
+    /// atribuição anterior, se houver, fica recuperável via `historico`
+    /// (D-14, task 4.6).
     ///
     /// `NotFound` se o registro ou o cliente não existirem — nesse caso o
     /// registro não é alterado (spec: "recusa a operação... registro
     /// permanece não atribuído").
     fn atribuir(&self, usage_record_id: &str, client_id: &str) -> Result<UsageRecord>;
+
+    /// Registra o custo pago informado pelo provider, chegado depois da
+    /// gravação inicial. O valor e a fonte anteriores permanecem recuperáveis
+    /// via `historico` — não são sobrescritos sem rastro (task 3.6, D-14).
+    fn atualizar_custo_pago(&self, usage_record_id: &str, pago: Money) -> Result<UsageRecord>;
+
+    /// Revisões registradas para um `usage_record`, mais recente primeiro.
+    fn historico(&self, usage_record_id: &str) -> Result<Vec<Revisao>>;
 
     /// Consumo sem cliente no período. Vazio quando o ledger está íntegro
     /// (spec: "o resultado é vazio... nenhum alarme").

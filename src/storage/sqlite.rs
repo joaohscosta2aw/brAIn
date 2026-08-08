@@ -4,7 +4,8 @@
 //! garante isso a cada push.
 
 use super::{
-    EntradaCatalogo, NovoConsumo, Periodo, Result, StorageError, Store, ViolacaoIntegridade,
+    EntradaCatalogo, NovoConsumo, Periodo, Result, Revisao, StorageError, Store,
+    ViolacaoIntegridade,
 };
 use crate::domain::{
     AttributionStatus, BillingMode, CostSource, Custo, Instante, Money, Tokens, UsageRecord,
@@ -180,19 +181,28 @@ impl Store for SqliteStore {
             return Err(StorageError::NotFound(format!("cliente {client_id}")));
         }
 
-        let linhas = conn
-            .execute(
-                "UPDATE usage_record
-                 SET client_id = ?1, attribution_status = 'attributed'
-                 WHERE id = ?2",
-                params![client_id, usage_record_id],
+        // Lida antes de sobrescrever: se já havia um cliente, essa reatribuição
+        // precisa deixar rastro (task 4.6, D-14).
+        let cliente_anterior: Option<String> = conn
+            .query_row(
+                "SELECT client_id FROM usage_record WHERE id = ?1",
+                params![usage_record_id],
+                |row| row.get(0),
             )
-            .map_err(|e| StorageError::Backend(e.to_string()))?;
+            .optional()
+            .map_err(|e| StorageError::Backend(e.to_string()))?
+            .ok_or_else(|| StorageError::NotFound(format!("usage_record {usage_record_id}")))?;
 
-        if linhas == 0 {
-            return Err(StorageError::NotFound(format!(
-                "usage_record {usage_record_id}"
-            )));
+        conn.execute(
+            "UPDATE usage_record
+             SET client_id = ?1, attribution_status = 'attributed'
+             WHERE id = ?2",
+            params![client_id, usage_record_id],
+        )
+        .map_err(|e| StorageError::Backend(e.to_string()))?;
+
+        if let Some(anterior) = cliente_anterior {
+            registrar_revisao(&conn, usage_record_id, "client_id", Some(&anterior))?;
         }
 
         conn.query_row(
@@ -201,6 +211,65 @@ impl Store for SqliteStore {
             row_to_usage_record,
         )
         .map_err(|e| StorageError::Backend(e.to_string()))
+    }
+
+    fn atualizar_custo_pago(&self, usage_record_id: &str, pago: Money) -> Result<UsageRecord> {
+        let conn = self.conn();
+
+        let anterior: Option<i64> = conn
+            .query_row(
+                "SELECT custo_pago_micros FROM usage_record WHERE id = ?1",
+                params![usage_record_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| StorageError::Backend(e.to_string()))?
+            .ok_or_else(|| StorageError::NotFound(format!("usage_record {usage_record_id}")))?;
+
+        conn.execute(
+            "UPDATE usage_record
+             SET custo_pago_micros = ?1, cost_source = 'provider'
+             WHERE id = ?2",
+            params![pago.0, usage_record_id],
+        )
+        .map_err(|e| StorageError::Backend(e.to_string()))?;
+
+        registrar_revisao(
+            &conn,
+            usage_record_id,
+            "custo_pago_micros",
+            anterior.map(|v| v.to_string()).as_deref(),
+        )?;
+
+        conn.query_row(
+            "SELECT * FROM usage_record WHERE id = ?1",
+            params![usage_record_id],
+            row_to_usage_record,
+        )
+        .map_err(|e| StorageError::Backend(e.to_string()))
+    }
+
+    fn historico(&self, usage_record_id: &str) -> Result<Vec<Revisao>> {
+        let conn = self.conn();
+        let mut stmt = conn
+            .prepare(
+                "SELECT campo, valor_anterior, revisado_em
+                 FROM usage_record_revisao
+                 WHERE usage_record_id = ?1
+                 ORDER BY id DESC",
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![usage_record_id], |row| {
+                Ok(Revisao {
+                    campo: row.get(0)?,
+                    valor_anterior: row.get(1)?,
+                    revisado_em: Instante(row.get(2)?),
+                })
+            })
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| StorageError::Backend(e.to_string()))
     }
 
     fn nao_atribuidos(&self, periodo: Periodo) -> Result<Vec<UsageRecord>> {
@@ -331,6 +400,21 @@ impl SqliteStore {
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(|e| StorageError::Backend(e.to_string()))
     }
+}
+
+fn registrar_revisao(
+    conn: &Connection,
+    usage_record_id: &str,
+    campo: &str,
+    valor_anterior: Option<&str>,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO usage_record_revisao (usage_record_id, campo, valor_anterior, revisado_em)
+         VALUES (?1, ?2, ?3, unixepoch())",
+        params![usage_record_id, campo, valor_anterior],
+    )
+    .map_err(|e| StorageError::Backend(e.to_string()))?;
+    Ok(())
 }
 
 fn row_to_usage_record(row: &Row) -> rusqlite::Result<UsageRecord> {
@@ -549,6 +633,76 @@ mod tests {
 
         let novo = s.preco_vigente("opus", Instante(2500)).unwrap().unwrap();
         assert_eq!(novo.preco_por_1k_tokens, Money(20_000_000));
+    }
+
+    #[test]
+    fn ausente_sobrevive_ao_roundtrip_do_banco() {
+        // Task 2.2: ausente e zero sao fatos distintos. Prova que o banco nao
+        // colapsa NULL em 0 na volta -- nao so a memoria (ja coberto em
+        // domain.rs), mas o caminho real de persistencia.
+        let s = store();
+        let mut consumo = novo_consumo("k1", "claude", "opus");
+        consumo.tokens.reasoning = None;
+        consumo.tokens.output = Some(0);
+        let gravado = s.gravar_consumo(consumo).unwrap();
+
+        assert_eq!(gravado.tokens.reasoning, None, "ausente permanece ausente");
+        assert_eq!(
+            gravado.tokens.output,
+            Some(0),
+            "zero permanece zero, nao vira ausente"
+        );
+    }
+
+    #[test]
+    fn custo_pago_tardio_preserva_valor_anterior_recuperavel() {
+        let s = store();
+        let mut consumo = novo_consumo("k1", "claude", "opus");
+        consumo.custo_equivalente_api = Some(Money(15_000_000));
+        let r = s.gravar_consumo(consumo).unwrap();
+        assert_eq!(r.custo.pago, None);
+
+        let atualizado = s.atualizar_custo_pago(&r.id, Money(14_500_000)).unwrap();
+        assert_eq!(atualizado.custo.pago, Some(Money(14_500_000)));
+        assert_eq!(atualizado.cost_source, CostSource::Provider);
+        // O equivalente não foi apagado pela chegada do custo pago.
+        assert_eq!(atualizado.custo.equivalente_api, Some(Money(15_000_000)));
+
+        let historico = s.historico(&r.id).unwrap();
+        assert_eq!(historico.len(), 1);
+        assert_eq!(historico[0].campo, "custo_pago_micros");
+        assert_eq!(
+            historico[0].valor_anterior, None,
+            "não havia valor pago antes"
+        );
+    }
+
+    #[test]
+    fn reatribuicao_preserva_cliente_anterior_recuperavel() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.upsert_client("acme").unwrap();
+        let r = s
+            .gravar_consumo(novo_consumo("k1", "claude", "opus"))
+            .unwrap();
+        s.atribuir(&r.id, "xpto").unwrap();
+        let reatribuido = s.atribuir(&r.id, "acme").unwrap();
+
+        assert_eq!(reatribuido.client_id.as_deref(), Some("acme"));
+
+        let historico = s.historico(&r.id).unwrap();
+        assert_eq!(historico.len(), 1);
+        assert_eq!(historico[0].campo, "client_id");
+        assert_eq!(historico[0].valor_anterior.as_deref(), Some("xpto"));
+    }
+
+    #[test]
+    fn atualizar_custo_de_registro_inexistente_e_notfound() {
+        let s = store();
+        let err = s
+            .atualizar_custo_pago("fantasma", Money(1_000_000))
+            .unwrap_err();
+        assert!(matches!(err, StorageError::NotFound(_)));
     }
 
     #[test]

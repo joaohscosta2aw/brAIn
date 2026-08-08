@@ -53,3 +53,14 @@ CREATE TABLE price_catalog (
     vigente_ate        INTEGER,
     PRIMARY KEY (model, vigente_desde)
 );
+
+-- Supersessão auditável (D-14): quando o custo pago ou a atribuição de um
+-- registro mudam depois de gravados, o valor anterior fica aqui em vez de
+-- ser sobrescrito sem rastro.
+CREATE TABLE usage_record_revisao (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    usage_record_id     TEXT NOT NULL REFERENCES usage_record(id),
+    campo               TEXT NOT NULL,
+    valor_anterior      TEXT,
+    revisado_em         INTEGER NOT NULL
+);

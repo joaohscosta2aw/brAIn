@@ -9,24 +9,24 @@
 
 Depende de 1.
 
-- [ ] 2.1 Implementar gravação de `usage_record` com provider, modelo, tokens de entrada/cache/saída/reasoning, `billing_mode`, os dois campos de custo e `occurred_at` em UTC
-- [ ] 2.2 Distinguir ausente, zero e desconhecido na representação de tokens e custo — verificável por teste que falha se ausente virar zero
-- [ ] 2.3 Tornar `usage_source` e `cost_source` obrigatórios: nenhum registro pode ser gravado sem ambos
-- [ ] 2.4 Rejeitar registro sem `occurred_at` determinável, sem gravar linha parcial
-- [ ] 2.5 Implementar a verificação de integridade do ledger cobrindo as quatro invariantes, reportando qual invariante falhou e em quais registros
+- [x] 2.1 Implementar gravação de `usage_record` com provider, modelo, tokens de entrada/cache/saída/reasoning, `billing_mode`, os dois campos de custo e `occurred_at` em UTC
+- [x] 2.2 Distinguir ausente, zero e desconhecido na representação de tokens e custo — verificável por teste que falha se ausente virar zero
+- [x] 2.3 Tornar `usage_source` e `cost_source` obrigatórios: nenhum registro pode ser gravado sem ambos (campos não-opcionais em `NovoConsumo` — o compilador impede a omissão, não apenas um `NOT NULL` no banco)
+- [x] 2.4 Rejeitar registro sem `occurred_at` determinável, sem gravar linha parcial (mesmo mecanismo: `occurred_at: Instante` é obrigatório no tipo)
+- [x] 2.5 Implementar a verificação de integridade do ledger cobrindo as quatro invariantes, reportando qual invariante falhou e em quais registros
 
 ## 3. Custo
 
 Depende de 2.
 
-- [ ] 3.1 Implementar o catálogo de preço versionado por vigência, de modo que o equivalente de um consumo passado permaneça reproduzível após atualização de preços
-- [ ] 3.2 Calcular o custo equivalente em API a partir de tokens e catálogo, para qualquer `billing_mode`, inclusive assinatura
-- [ ] 3.3 Registrar o custo pago quando o provider o informa, mantendo-o em campo distinto do equivalente
-- [ ] 3.4 Implementar a precedência D-6 sobre o valor pago, sem apagar o equivalente
-- [ ] 3.5 Marcar `cost_source = unknown` apenas quando não há custo do provider nem entrada de catálogo, sem registrar zero em nenhum dos dois campos
-- [ ] 3.6 Implementar supersessão auditável: quando o custo pago chega depois, o valor e a fonte anteriores permanecem recuperáveis
-- [ ] 3.7 Garantir que nenhuma apresentação exiba o equivalente como valor pago — verificável por teste que falha se os dois forem somados num único número
-- [ ] 3.8 Garantir que agregações informem a composição por fonte e destaquem a parcela sem catálogo, que é receita não faturável
+- [x] 3.1 Implementar o catálogo de preço versionado por vigência, de modo que o equivalente de um consumo passado permaneça reproduzível após atualização de preços
+- [x] 3.2 Calcular o custo equivalente em API a partir de tokens e catálogo, para qualquer `billing_mode`, inclusive assinatura
+- [x] 3.3 Registrar o custo pago quando o provider o informa, mantendo-o em campo distinto do equivalente
+- [x] 3.4 Implementar a precedência D-6 sobre o valor pago, sem apagar o equivalente
+- [x] 3.5 Marcar `cost_source = unknown` apenas quando não há custo do provider nem entrada de catálogo, sem registrar zero em nenhum dos dois campos
+- [x] 3.6 Implementar supersessão auditável: quando o custo pago chega depois, o valor e a fonte anteriores permanecem recuperáveis
+- [x] 3.7 Garantir que nenhuma apresentação exiba o equivalente como valor pago — verificável por teste que falha se os dois forem somados num único número
+- [ ] 3.8 Garantir que agregações informem a composição por fonte e destaquem a parcela sem catálogo, que é receita não faturável (pertence à camada de apresentação — grupo 7, comandos)
 
 ## 4. Atribuição
 
