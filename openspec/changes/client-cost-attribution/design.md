@@ -11,9 +11,17 @@ session files → PTY (**D-4**), custo do provider prevalece sobre catálogo (**
 Restrição que molda tudo: **não há daemon, orquestração nem UI na v0.0**. O modo é
 observe — o Brian lê o que os providers já produziram, sem dirigir nenhum agente.
 
-Escopo confirmado: os cinco providers do blueprint (Claude, Codex, Gemini, Grok,
-ZCode). Isso é o que torna a change não-trivial — cada um expõe consumo de um jeito
-diferente, e vários não expõem custo em dólar.
+Escopo confirmado para esta change: quatro providers canônicos do recorte v0.0
+(Claude, Codex, Grok e ZCode). Isso é o que torna a change não-trivial — cada
+um expõe consumo de um jeito diferente, e vários não expõem custo em dólar.
+
+**[Δ] Matriz operacional observada em 2026-08-08 nesta máquina:** `claude`,
+`codex`, `grok`, `agy`, `copilot`, `qwen/deepseek` e `qwen/z.ai` responderam
+com sucesso em chamadas mínimas; `qwen/kimi` ficou bloqueado por saldo; `zcode`
+permaneceu sem fonte utilizável para importação retroativa. Esta descoberta não
+altera automaticamente o escopo da change: AGY, Copilot CLI e Qwen entram aqui
+como evidência de fontes promissoras para futuros adapters, não como tasks já
+concluídas deste grupo.
 
 ## Goals / Non-Goals
 
@@ -126,8 +134,8 @@ derivada resolvem sem reescrever o histórico.
 
 ## Risks / Trade-offs
 
-- **Cinco fontes de uso não documentadas e instáveis** → maior risco de cronograma
-  da change. Mitigação: núcleo agnóstico e adapters independentes; a v0.0 fecha com
+- **Fontes de uso não documentadas e instáveis** → maior risco de cronograma da
+  change. Mitigação: núcleo agnóstico e adapters independentes; a v0.0 fecha com
   os providers que funcionarem, e cada um que faltar é visível como cobertura
   declarada, não como silêncio.
 

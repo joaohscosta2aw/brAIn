@@ -63,12 +63,18 @@ concluir a task — sem fixture, o adapter fica em `não tentado`.
 
 - [x] 6.1 Definir o formato de fixture de amostra e o teste genérico que confronta os campos declarados por um adapter contra o que ele realmente extrai da amostra (padrão: parsing puro separado de I/O, testável sem tocar disco — `src/adapters/claude.rs::parse_linha`)
 - [x] 6.2 Adapter Claude — capturar amostra real, declarar tier e campos, provar extração contra a fixture (tier `session_files`, risco de R-4 aceito conscientemente — ver design.md)
-- [ ] 6.3 Adapter Codex — `não tentado`: CLI oficial não instalado nesta máquina
-- [ ] 6.4 Adapter Gemini — `não tentado`: CLI presente, sem autenticação configurada nesta máquina (credencial do operador, não decisão de código)
+- [x] 6.3 Adapter Codex — capturar amostra real, declarar tier e campos, provar extração contra a fixture (tier `session_files`; fixture real versionada em `src/adapters/fixtures/codex_sessao.jsonl`, extração coberta por testes do módulo `src/adapters/codex.rs`)
+- [ ] 6.4 Adapter Gemini — `sem fonte utilizável`: CLI real (`agy`/Antigravity) com autenticação funcional, headless JSON confirmado com chamada real — diferente do ZCode, aqui a CLI existe. O que falta é histórico consultável: investigados `history.jsonl` (prompt digitado, não uso), SQLite de conversas (colunas blob protobuf sem schema, busca do token count real como varint não encontrou nada) e `transcript.jsonl` (conteúdo de conversa, fora de escopo). Sem o `.proto` oficial, decodificar os blobs não é viável nesta investigação
 - [x] 6.5 Adapter Grok — capturar amostra real, declarar tier e campos, provar extração contra a fixture (tier `session_files`; formato mais favorável que o Claude: usage/custo em eventos `turn_completed` totalmente separados de conteúdo de mensagem — filtrar por tipo de evento já evita ler conteúdo, estruturalmente)
-- [ ] 6.6 Adapter ZCode — `não tentado`: CLI oficial não instalado nesta máquina
+- [ ] 6.6 Adapter ZCode — `sem fonte utilizável`: app nativo inspecionado, sem log de uso estável/documentado para importação retroativa; permanece explicitamente fora de conclusão, não como ausência silenciosa
 - [x] 6.7 Distinguir três estados por provider na cobertura declarada: `verificado` (fixture existe e o teste passa), `sem fonte utilizável` (fonte inspecionada e comprovadamente insuficiente, com o motivo registrado) e `não tentado`. Um provider nunca pode aparecer como ausência silenciosa de consumo (`src/adapters/mod.rs::StatusCobertura`, `cobertura_v0_0()`)
 - [x] 6.8 Remover das amostras qualquer conteúdo de prompt, credencial ou dado de cliente antes de versioná-las — a fixture prova formato, não guarda trabalho real (IDs fictícios, testado que `content` nunca aparece no registro extraído)
+
+**Observação de operação real (2026-08-08):** fora do recorte canônico acima,
+foram validados nesta máquina `agy`, `copilot` e `qwen` (com `deepseek-v4-pro`
+e `glm-5.2`) como CLIs operacionais. Eles não contam como tasks concluídas
+deste grupo porque ainda não existe fixture sanitizada + parser dedicado no
+repositório para cada um.
 
 ## 7. Comandos
 

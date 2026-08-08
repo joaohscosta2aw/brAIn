@@ -100,3 +100,16 @@ Nenhuma — não existem specs anteriores.
 - **Sem dependências externas de rede** além das fontes de uso dos próprios providers.
 - **Critério de release:** violar qualquer invariante de integridade do ledger
   (§13.9 do blueprint) é bug de release, não débito técnico.
+
+## Estado Operacional Observado
+
+Matriz validada nesta máquina em **2026-08-08**:
+
+- **Operacionais:** `claude`, `codex`, `grok`, `agy`, `copilot`, `qwen`
+  com `deepseek-v4-pro`, `qwen` com `glm-5.2` (`Z.AI`)
+- **Configurado mas bloqueado por billing:** `qwen` com `kimi-k3`
+- **Sem fonte utilizável para importação retroativa:** `zcode`
+
+Esta change continua com o recorte canônico de v0.0 descrito em `design.md`;
+os CLIs adicionais observados acima são evidência operacional útil para os
+próximos increments de adapters, não expansão automática de escopo.

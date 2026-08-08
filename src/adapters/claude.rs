@@ -7,6 +7,7 @@
 //! Risco de ToS aceito conscientemente (design.md, R-4) — ver ali antes de
 //! estender este adapter para produção real.
 
+use super::tempo::parse_timestamp_iso8601;
 use crate::domain::{BillingMode, Instante, Tokens, UsageSource};
 use crate::importacao::{ColetorDeUso, ConsumoColetado, ErroColeta, TierIntegracao};
 use crate::storage::Periodo;
@@ -73,41 +74,6 @@ fn parse_linha(linha: &str) -> Option<RegistroExtraido> {
             reasoning: None,
         },
     })
-}
-
-/// Parser mínimo de timestamp ISO-8601 UTC (`YYYY-MM-DDTHH:MM:SS[.fff]Z`)
-/// para segundos desde a época. Sem dependência nova: o formato é fixo e
-/// conhecido (é o próprio Claude Code que o escreve), não é entrada externa
-/// arbitrária que justificasse um parser de calendário completo.
-fn parse_timestamp_iso8601(s: &str) -> Option<i64> {
-    let s = s.strip_suffix('Z')?;
-    let (data, hora) = s.split_once('T')?;
-    let mut partes_data = data.split('-');
-    let ano: i64 = partes_data.next()?.parse().ok()?;
-    let mes: i64 = partes_data.next()?.parse().ok()?;
-    let dia: i64 = partes_data.next()?.parse().ok()?;
-
-    let hora = hora.split('.').next()?; // descarta milissegundos
-    let mut partes_hora = hora.split(':');
-    let h: i64 = partes_hora.next()?.parse().ok()?;
-    let m: i64 = partes_hora.next()?.parse().ok()?;
-    let sec: i64 = partes_hora.next()?.parse().ok()?;
-
-    // Dias desde a época via algoritmo civil_from_days (Howard Hinnant),
-    // válido para o calendário gregoriano proléptico — sem dependência de
-    // data/hora só para converter um timestamp em segundos.
-    let dias = dias_desde_epoca(ano, mes, dia);
-    Some(dias * 86_400 + h * 3600 + m * 60 + sec)
-}
-
-fn dias_desde_epoca(y: i64, m: i64, d: i64) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = y - era * 400;
-    let mp = (m + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
 }
 
 pub struct ClaudeAdapter {

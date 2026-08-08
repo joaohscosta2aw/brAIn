@@ -285,7 +285,9 @@ mod tests {
             itens: vec![item("codex", Some("c1"), 100)],
             periodos_recebidos: None,
         });
-        let quebrado: Box<dyn ColetorDeUso> = Box::new(ColetorQuebrado { provider: "gemini" });
+        let quebrado: Box<dyn ColetorDeUso> = Box::new(ColetorQuebrado {
+            provider: "quebrado",
+        });
 
         let resultados = importar(&s, &[bom, quebrado], periodo_aberto()).unwrap();
 
@@ -296,12 +298,12 @@ mod tests {
         assert_eq!(codex.gravados, 1);
         assert!(codex.erro.is_none());
 
-        let gemini = resultados
+        let quebrado = resultados
             .iter()
-            .find(|r| r.provider_id == "gemini")
+            .find(|r| r.provider_id == "quebrado")
             .unwrap();
-        assert_eq!(gemini.gravados, 0);
-        assert_eq!(gemini.erro.as_deref(), Some("fonte fora do ar"));
+        assert_eq!(quebrado.gravados, 0);
+        assert_eq!(quebrado.erro.as_deref(), Some("fonte fora do ar"));
     }
 
     #[test]
