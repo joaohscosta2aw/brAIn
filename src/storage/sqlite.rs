@@ -660,6 +660,40 @@ mod tests {
     }
 
     #[test]
+    fn consulta_de_cliente_nao_inclui_nao_atribuidos() {
+        // Spec cost-attribution, "Consulta de cliente não inclui não
+        // atribuídos" -- modo de falha diferente de vazar para OUTRO
+        // cliente (já coberto acima): aqui o risco é vazar consumo SEM
+        // dono nenhum para dentro da visão de um cliente real.
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        let atribuido = s
+            .gravar_consumo(novo_consumo("k1", "claude", "opus"))
+            .unwrap();
+        s.atribuir(&atribuido.id, "xpto").unwrap();
+        // Órfão no mesmo período -- client_id NULL.
+        s.gravar_consumo(novo_consumo("k2", "codex", "gpt"))
+            .unwrap();
+
+        let de_xpto = s
+            .consumo_do_cliente(
+                "xpto",
+                Periodo {
+                    desde: Instante(0),
+                    ate: None,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(de_xpto.len(), 1, "só o registro atribuído a xpto");
+        assert!(
+            de_xpto
+                .iter()
+                .all(|r| r.client_id.as_deref() == Some("xpto"))
+        );
+    }
+
+    #[test]
     fn catalogo_versionado_preserva_preco_historico() {
         let s = store();
         s.upsert_catalogo(EntradaCatalogo {

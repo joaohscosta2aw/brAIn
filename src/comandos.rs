@@ -255,16 +255,20 @@ pub fn formatar_unattributed(registros: &[UsageRecord]) -> String {
     if registros.is_empty() {
         return "nenhum consumo não-atribuído".to_string();
     }
-    let mut linhas = vec!["provider\tmodel\ttokens\tcusto\tinstante".to_string()];
+    // Colunas separadas para pago e equivalente, como em toda outra visão
+    // de custo -- uma coluna "custo" genérica escondendo qual dos dois
+    // valores está ali é a mesma ambiguidade que §42.2 proíbe.
+    let mut linhas =
+        vec!["provider\tmodel\ttokens\tcusto_pago\tcusto_equivalente\tinstante".to_string()];
     for r in registros {
         let tokens = r.tokens.total_conhecido();
-        let custo = fmt_opt_money(r.custo.pago.or(r.custo.equivalente_api));
         linhas.push(format!(
-            "{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}",
             r.provider_id,
             r.model,
             tokens,
-            custo,
+            fmt_opt_money(r.custo.pago),
+            fmt_opt_money(r.custo.equivalente_api),
             formatar_instante(r.occurred_at)
         ));
     }
@@ -661,6 +665,44 @@ mod tests {
     #[test]
     fn unattributed_vazio_tem_mensagem_clara() {
         assert_eq!(formatar_unattributed(&[]), "nenhum consumo não-atribuído");
+    }
+
+    #[test]
+    fn unattributed_nunca_apresenta_equivalente_como_pago() {
+        // Bug real encontrado na auditoria da task 8.6: formatar_unattributed
+        // colapsava pago/equivalente numa coluna "custo" genérica via
+        // .or() -- se pago fosse None, o equivalente aparecia ali sem
+        // rótulo, indistinguível de valor realmente pago.
+        let regs = vec![registro(
+            "codex",
+            "gpt",
+            None,
+            Some(500_000),
+            CostSource::Catalog,
+            None, // não-atribuído
+        )];
+        let saida = formatar_unattributed(&regs);
+        let cabecalho = saida.lines().next().unwrap();
+        assert!(cabecalho.contains("custo_pago"));
+        assert!(cabecalho.contains("custo_equivalente"));
+
+        let campos: Vec<&str> = saida.lines().nth(1).unwrap().split('\t').collect();
+        let idx_pago = cabecalho
+            .split('\t')
+            .position(|c| c == "custo_pago")
+            .unwrap();
+        let idx_equiv = cabecalho
+            .split('\t')
+            .position(|c| c == "custo_equivalente")
+            .unwrap();
+        assert_eq!(
+            campos[idx_pago], "—",
+            "sem custo pago real, não deve aparecer valor"
+        );
+        assert_ne!(
+            campos[idx_equiv], "—",
+            "equivalente calculável deve aparecer, na coluna certa"
+        );
     }
 
     #[test]
