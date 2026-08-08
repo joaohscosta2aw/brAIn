@@ -1,0 +1,14 @@
+[package]
+name = "brian"
+version = "0.0.0"
+edition = "2024"
+description = "Plano de controle de engenharia de IA — capacidade, custo e continuidade entre providers"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "brian"
+path = "src/main.rs"
+
+# Sem dependências ainda. Cada uma entra na task que a exigir, não antes.
+[dependencies]

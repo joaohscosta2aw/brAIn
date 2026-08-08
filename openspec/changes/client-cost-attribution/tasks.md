@@ -1,6 +1,6 @@
 ## 1. Fundação
 
-- [ ] 1.1 Criar o projeto Rust com o binário `brian` e estrutura de módulos separando `storage/` do restante (D-9), cumprindo o contrato de `docs/harness/ambiente.md`: `Cargo.toml`, `rust-toolchain.toml` fixando a stable vigente, e `cargo build`/`test`/`clippy`/`fmt --check` executando num clone limpo
+- [x] 1.1 Criar o projeto Rust com o binário `brian` e estrutura de módulos separando `storage/` do restante (D-9), cumprindo o contrato de `docs/harness/ambiente.md`: `Cargo.toml`, `rust-toolchain.toml` fixando a stable vigente, e `cargo build`/`test`/`clippy`/`fmt --check` executando num clone limpo
 - [ ] 1.2 Definir as traits de armazenamento que o núcleo consome, sem nenhuma dependência de SQLite fora de `storage/`
 - [ ] 1.3 Implementar migrações versionadas com registro das migrações já aplicadas, idempotentes na reexecução
 - [ ] 1.4 Criar o esquema inicial: `client`, `provider`, `usage_record`, `price_catalog`, `schema_migration` (referência: BRIAN-BLUEPRINT-V1.md §60)

@@ -6,3 +6,6 @@
 
 # Artefatos de execucao da auditoria
 .claude/better-harness/
+
+# Rust
+/target

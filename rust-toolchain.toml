@@ -1,0 +1,5 @@
+# Lido pelo rustup e pelo CI. O Rust local é gerenciado pelo Homebrew, que
+# ignora este arquivo — ver docs/harness/ambiente.md.
+[toolchain]
+channel = "1.97.1"
+components = ["clippy", "rustfmt"]

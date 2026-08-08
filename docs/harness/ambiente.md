@@ -10,13 +10,18 @@ cumprir. Depois dela, ele descreve o que já existe.
 
 | Requisito | Estado | Observação |
 |---|---|---|
-| Rust (stable) | **ausente** | Não instalado nesta máquina. Instale via `rustup` antes da task 1.1 |
+| Rust | presente (1.97.1) | Instalado via Homebrew, com `clippy` 0.1.97 e `rustfmt` 1.9.0 |
 | OpenSpec CLI | presente (1.8.0) | Necessário para descobrir e validar changes |
 | git | presente | D-7 depende de worktrees |
 
-A versão exata do Rust **não é fixada aqui de propósito**. Fixar um número que
-não foi verificado é pior que não fixar. A task 1.1 registra a stable vigente no
-momento da criação, em `rust-toolchain.toml`, e a partir daí ela é a verdade.
+**Sobre fixar a versão.** O Rust aqui é gerenciado pelo Homebrew, que **não lê**
+`rust-toolchain.toml` — esse arquivo é um recurso do `rustup`. A task 1.1 cria o
+arquivo mesmo assim, porque o CI usa rustup e o respeita, e porque uma eventual
+migração para rustup passa a funcionar sem retrabalho. Localmente, a verdade é a
+versão que o Homebrew tiver instalado.
+
+Consequência prática: uma divergência entre a versão local e a do CI é possível.
+Se ela causar problema real, aí sim vale migrar para `rustup` — não antes.
 
 ## Comandos canônicos
 
