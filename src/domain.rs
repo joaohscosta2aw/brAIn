@@ -3,12 +3,6 @@
 //! Fixados pelos specs em `openspec/changes/client-cost-attribution/specs/`.
 //! Não há SQL aqui — a persistência é problema de `storage`.
 
-// Os consumidores destes tipos chegam no grupo 2 de tasks (ledger). Até lá o
-// módulo é legitimamente não-usado. Este allow sai quando a task 2.1 gravar o
-// primeiro registro — se ainda estiver aqui depois disso, é sinal de que algo
-// nunca encontrou consumidor e deveria ser apagado.
-#![allow(dead_code)]
-
 use std::fmt;
 
 /// Origem das contagens de token.

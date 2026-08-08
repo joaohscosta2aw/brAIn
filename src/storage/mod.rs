@@ -6,10 +6,9 @@
 //!
 //! `scripts/verificar-invariantes.sh` verifica isso mecanicamente a cada push.
 
-// Mesma razão de `domain`: os consumidores chegam no grupo 2. Sai quando a
-// task 1.3 implementar as migrações por trás de `Store`.
-#![allow(dead_code)]
+pub mod sqlite;
 
+use crate::domain::{BillingMode, CostSource, Instante, Money, Tokens, UsageRecord, UsageSource};
 use std::fmt;
 
 /// Erro de armazenamento visto de fora do módulo.
@@ -42,11 +41,138 @@ impl std::error::Error for StorageError {}
 
 pub type Result<T> = std::result::Result<T, StorageError>;
 
-/// Abre e prepara o armazenamento, aplicando migrações pendentes.
+/// Um `usage_record` ainda sem identidade nem estado de atribuição — o que um
+/// coletor de consumo apresenta ao armazenamento para gravação.
 ///
-/// Implementado na task 1.3.
+/// `dedup_key` é o que garante idempotência (spec: "Importação idempotente").
+/// Vem do identificador estável do provider quando existe; senão, de uma
+/// impressão digital calculada por quem chama (task 5.3). O armazenamento não
+/// decide a chave, só a usa: apresentar a mesma chave duas vezes devolve o
+/// registro já existente em vez de duplicar.
+#[derive(Debug, Clone)]
+pub struct NovoConsumo {
+    pub dedup_key: String,
+    pub provider_id: String,
+    pub model: String,
+    pub tokens: Tokens,
+    pub custo_pago: Option<Money>,
+    pub custo_equivalente_api: Option<Money>,
+    pub billing_mode: BillingMode,
+    pub usage_source: UsageSource,
+    pub cost_source: CostSource,
+    /// Cliente já conhecido no momento da gravação, se houver. `None` grava
+    /// como `unattributed` — nunca como suposição de dono.
+    pub client_id: Option<String>,
+    pub occurred_at: Instante,
+}
+
+/// Uma entrada do catálogo de preço, válida num intervalo de vigência.
+///
+/// Versionado por vigência para que o equivalente de um consumo passado
+/// permaneça reproduzível mesmo que o preço mude depois (design.md).
+#[derive(Debug, Clone)]
+pub struct EntradaCatalogo {
+    pub model: String,
+    pub preco_por_1k_tokens: Money,
+    pub vigente_desde: Instante,
+    /// `None` = ainda vigente.
+    pub vigente_ate: Option<Instante>,
+}
+
+/// Uma violação de invariante de integridade do ledger, localizada a um
+/// registro específico (spec: "identifica qual invariante foi violada e em
+/// quais registros").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ViolacaoIntegridade {
+    pub usage_record_id: String,
+    pub descricao: String,
+}
+
+/// Recorte de tempo meio-aberto: `[desde, ate)`. `ate = None` significa "até
+/// agora".
+#[derive(Debug, Clone, Copy)]
+pub struct Periodo {
+    pub desde: Instante,
+    pub ate: Option<Instante>,
+}
+
+/// A fronteira de armazenamento que o núcleo consome.
+///
+/// Uma única trait, não uma por grupo de tasks: as operações compartilham a
+/// mesma transação lógica em vários casos (gravar E verificar integridade;
+/// atribuir E preservar o valor anterior), e SQLite não teria como compor
+/// transações através de múltiplos objetos de trait sem vazar a conexão para
+/// fora de `storage/`.
 pub trait Store {
-    /// Aplica as migrações ainda não aplicadas. Idempotente: reexecutar sobre
-    /// um armazenamento já migrado não altera nada.
+    /// Aplica as migrações ainda não aplicadas. Idempotente.
     fn migrate(&self) -> Result<()>;
+
+    /// Registra um cliente. Idempotente por id: registrar o mesmo id duas
+    /// vezes não é erro.
+    fn upsert_client(&self, client_id: &str) -> Result<()>;
+
+    fn client_exists(&self, client_id: &str) -> Result<bool>;
+
+    /// Grava um consumo. Se `dedup_key` já existir, devolve o registro
+    /// existente sem criar duplicata e sem alterar totais (spec: importação
+    /// idempotente).
+    fn gravar_consumo(&self, novo: NovoConsumo) -> Result<UsageRecord>;
+
+    /// Atribui um registro não-atribuído a um cliente existente.
+    ///
+    /// `NotFound` se o registro ou o cliente não existirem — nesse caso o
+    /// registro não é alterado (spec: "recusa a operação... registro
+    /// permanece não atribuído").
+    fn atribuir(&self, usage_record_id: &str, client_id: &str) -> Result<UsageRecord>;
+
+    /// Consumo sem cliente no período. Vazio quando o ledger está íntegro
+    /// (spec: "o resultado é vazio... nenhum alarme").
+    fn nao_atribuidos(&self, periodo: Periodo) -> Result<Vec<UsageRecord>>;
+
+    /// Consumo de um cliente no período. Isolamento garantido pela própria
+    /// consulta: nunca inclui registros de outro cliente nem não-atribuídos
+    /// (spec: "isolamento... por construção, não por filtragem posterior").
+    fn consumo_do_cliente(&self, client_id: &str, periodo: Periodo) -> Result<Vec<UsageRecord>>;
+
+    /// Todo o ledger no período, para agregações que não são por cliente
+    /// (`--by provider`, `--by model`, exportação completa).
+    fn consumo_no_periodo(&self, periodo: Periodo) -> Result<Vec<UsageRecord>>;
+
+    /// Verifica as quatro invariantes de integridade contra o ledger inteiro.
+    fn verificar_integridade(&self) -> Result<Vec<ViolacaoIntegridade>>;
+
+    /// Insere ou atualiza uma entrada de catálogo. Não sobrescreve entradas
+    /// passadas: uma nova vigência fecha a anterior (`vigente_ate`) em vez de
+    /// apagá-la, preservando reprodutibilidade histórica.
+    fn upsert_catalogo(&self, entrada: EntradaCatalogo) -> Result<()>;
+
+    /// Preço vigente para um modelo num instante. `None` se o modelo nunca
+    /// esteve no catálogo naquele instante.
+    fn preco_vigente(&self, model: &str, em: Instante) -> Result<Option<EntradaCatalogo>>;
+}
+
+#[cfg(test)]
+pub(crate) mod test_util {
+    use super::*;
+
+    pub fn novo_consumo(dedup_key: &str, provider: &str, model: &str) -> NovoConsumo {
+        NovoConsumo {
+            dedup_key: dedup_key.to_string(),
+            provider_id: provider.to_string(),
+            model: model.to_string(),
+            tokens: Tokens {
+                input: Some(100),
+                cache: None,
+                output: Some(50),
+                reasoning: None,
+            },
+            custo_pago: None,
+            custo_equivalente_api: None,
+            billing_mode: BillingMode::Api,
+            usage_source: UsageSource::Provider,
+            cost_source: CostSource::Unknown,
+            client_id: None,
+            occurred_at: Instante(1_700_000_000),
+        }
+    }
 }

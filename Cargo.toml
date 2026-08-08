@@ -10,5 +10,7 @@ publish = false
 name = "brian"
 path = "src/main.rs"
 
-# Sem dependências ainda. Cada uma entra na task que a exigir, não antes.
+# Cada dependência entra na task que a exige, não antes.
 [dependencies]
+# "bundled": compila o SQLite junto, sem depender de lib do sistema (D-1).
+rusqlite = { version = "0.32", features = ["bundled"] }
