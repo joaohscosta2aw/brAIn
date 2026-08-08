@@ -8,6 +8,7 @@
 
 pub mod claude;
 pub mod codex;
+pub mod copilot;
 pub mod grok;
 mod tempo;
 
@@ -66,6 +67,10 @@ pub fn cobertura_v0_0() -> Vec<CoberturaProvider> {
         },
         CoberturaProvider {
             provider_id: "grok",
+            status: StatusCobertura::Verificado,
+        },
+        CoberturaProvider {
+            provider_id: "github-copilot",
             status: StatusCobertura::Verificado,
         },
         CoberturaProvider {
