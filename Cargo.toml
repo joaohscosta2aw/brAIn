@@ -17,3 +17,5 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # Navegação seletiva via Value — sem derive, não precisamos de struct completa
 # para ler 5 campos de um documento que tem dezenas.
 serde_json = "1"
+# Blueprint especifica clap para a CLI (BRIAN-BLUEPRINT-V1.md §52.1, D-2).
+clap = { version = "4", features = ["derive"] }

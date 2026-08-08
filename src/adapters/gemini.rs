@@ -19,7 +19,16 @@
 use crate::domain::{BillingMode, Instante, Tokens, UsageSource};
 use crate::importacao::{ColetorDeUso, ConsumoColetado, ErroColeta, TierIntegracao};
 use crate::storage::Periodo;
-use std::process::Command;
+use std::process::{Child, Command};
+use std::time::{Duration, Instant};
+
+/// `agy` tem seu próprio timeout interno de 60s esperando autenticação
+/// quando não há credencial em cache — independente do `stdin` do processo
+/// pai. Sem limite aqui, `brian import` ficaria parado até 1 minuto por
+/// chamada toda vez que o Gemini não estiver autenticado. 5s é suficiente
+/// para uma resposta real de `/usage` (é uma consulta de cota, não uma
+/// geração de modelo) e curto o bastante para não travar o import inteiro.
+const TIMEOUT_AGY: Duration = Duration::from_secs(5);
 
 pub struct GeminiAdapter {
     /// Injetável para teste — em produção é sempre `agy`.
@@ -30,6 +39,43 @@ impl GeminiAdapter {
     pub fn new() -> Self {
         Self {
             executavel: "agy".to_string(),
+        }
+    }
+}
+
+/// Espera o processo terminar até `timeout`; mata e devolve erro se estourar.
+/// Sem dependência nova: só `try_wait()` num laço com espera curta, que é o
+/// que uma crate de "wait com timeout" faria por baixo dos panos mesmo.
+fn aguardar_com_timeout(
+    mut filho: Child,
+    timeout: Duration,
+) -> Result<std::process::Output, ErroColeta> {
+    let inicio = Instant::now();
+    loop {
+        match filho.try_wait() {
+            Ok(Some(_)) => {
+                return filho.wait_with_output().map_err(|e| ErroColeta {
+                    motivo: format!("erro coletando saída: {e}"),
+                });
+            }
+            Ok(None) => {
+                if inicio.elapsed() >= timeout {
+                    let _ = filho.kill();
+                    let _ = filho.wait();
+                    return Err(ErroColeta {
+                        motivo: format!(
+                            "`agy` não respondeu em {}s — provavelmente aguardando autenticação",
+                            timeout.as_secs()
+                        ),
+                    });
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => {
+                return Err(ErroColeta {
+                    motivo: format!("erro aguardando `agy`: {e}"),
+                });
+            }
         }
     }
 }
@@ -99,12 +145,21 @@ impl ColetorDeUso for GeminiAdapter {
     }
 
     fn coletar(&self, periodo: Periodo) -> Result<Vec<ConsumoColetado>, ErroColeta> {
-        let saida = Command::new(&self.executavel)
+        // stdin nulo, sempre: sem isso, um `agy` não-autenticado herda o
+        // terminal e fica esperando o usuário colar um código OAuth. E
+        // mesmo com stdin nulo, `agy` ainda espera até 60s por conta própria
+        // -- por isso o timeout explícito abaixo, não é redundante.
+        let filho = Command::new(&self.executavel)
             .args(["--print", "/usage", "--output-format", "json"])
-            .output()
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
             .map_err(|e| ErroColeta {
                 motivo: format!("não foi possível executar `{}`: {e}", self.executavel),
             })?;
+
+        let saida = aguardar_com_timeout(filho, TIMEOUT_AGY)?;
 
         if !saida.status.success() {
             return Err(ErroColeta {
@@ -228,5 +283,92 @@ mod tests {
     fn tier_e_headless_json_nao_session_files() {
         let adapter = GeminiAdapter::new();
         assert_eq!(adapter.tier(), TierIntegracao::HeadlessJson);
+    }
+
+    /// Cria um executável de mentira que só dorme — nunca toca no `agy`
+    /// real nem em qualquer serviço de autenticação de verdade.
+    fn script_que_dorme(segundos: u64) -> std::path::PathBuf {
+        let mut caminho = std::env::temp_dir();
+        caminho.push(format!(
+            "brian-teste-fake-agy-dorme-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&caminho, format!("#!/bin/sh\nsleep {segundos}\n")).unwrap();
+        std::fs::set_permissions(
+            &caminho,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+        caminho
+    }
+
+    fn script_que_responde(saida_json: &str) -> std::path::PathBuf {
+        let mut caminho = std::env::temp_dir();
+        caminho.push(format!(
+            "brian-teste-fake-agy-responde-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(
+            &caminho,
+            format!("#!/bin/sh\ncat <<'EOF'\n{saida_json}\nEOF\n"),
+        )
+        .unwrap();
+        std::fs::set_permissions(
+            &caminho,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+        caminho
+    }
+
+    #[test]
+    fn executavel_que_nao_responde_falha_apos_timeout_nao_trava() {
+        let script = script_que_dorme(30); // bem maior que TIMEOUT_AGY
+        let adapter = GeminiAdapter {
+            executavel: script.to_string_lossy().to_string(),
+        };
+
+        let inicio = Instant::now();
+        let resultado = adapter.coletar(Periodo {
+            desde: Instante(0),
+            ate: None,
+        });
+        let duracao = inicio.elapsed();
+
+        assert!(resultado.is_err(), "deve falhar, não travar esperando");
+        assert!(
+            duracao < Duration::from_secs(10),
+            "deve respeitar o timeout de {}s, levou {duracao:?}",
+            TIMEOUT_AGY.as_secs()
+        );
+
+        std::fs::remove_file(&script).ok();
+    }
+
+    #[test]
+    fn executavel_que_responde_rapido_funciona_normalmente() {
+        let script = script_que_responde(FIXTURE);
+        let adapter = GeminiAdapter {
+            executavel: script.to_string_lossy().to_string(),
+        };
+
+        let itens = adapter
+            .coletar(Periodo {
+                desde: Instante(0),
+                ate: None,
+            })
+            .unwrap();
+
+        assert_eq!(itens.len(), 2);
+
+        std::fs::remove_file(&script).ok();
     }
 }

@@ -76,23 +76,17 @@ máquina.
 - [x] 6.7 Distinguir três estados por provider na cobertura declarada: `verificado` (fixture existe e o teste passa), `sem fonte utilizável` (fonte inspecionada e comprovadamente insuficiente, com o motivo registrado) e `não tentado`. Um provider nunca pode aparecer como ausência silenciosa de consumo (`src/adapters/mod.rs::StatusCobertura`, `cobertura_v0_0()`)
 - [x] 6.8 Remover das amostras qualquer conteúdo de prompt, credencial ou dado de cliente antes de versioná-las — a fixture prova formato, não guarda trabalho real (IDs fictícios, testado que `content` nunca aparece no registro extraído)
 
-**Observação de operação real (2026-08-08):** fora do recorte canônico acima,
-foram validados nesta máquina `agy`, `copilot` e `qwen` (com `deepseek-v4-pro`
-e `glm-5.2`) como CLIs operacionais. Eles não contam como tasks concluídas
-deste grupo porque ainda não existe fixture sanitizada + parser dedicado no
-repositório para cada um.
-
 ## 7. Comandos
 
 Depende de 3, 4, 5.
 
-- [ ] 7.1 `brian import` com recorte de período
-- [ ] 7.2 `brian attribute` para atribuição manual
-- [ ] 7.3 `brian costs` por cliente e por período, apresentando custo pago e custo equivalente como grandezas distintas, e distinguindo cliente sem consumo de cliente inexistente
-- [ ] 7.4 `brian costs --by provider` com soma coerente com o total do mesmo período
-- [ ] 7.5 `brian costs --by model` expondo custo equivalente por token, permitindo comparar modelos de providers distintos numa base comum
-- [ ] 7.6 `brian costs --unattributed` listando cada registro órfão com provider, modelo, tokens, custo e instante
-- [ ] 7.7 `brian costs --export` em formato tabular com colunas separadas para custo pago e custo equivalente, mais `billing_mode`, `usage_source` e `cost_source` por registro
+- [x] 7.1 `brian import` com recorte de período (`--desde`/`--ate` ISO-8601). Testado com binário real: todos os 8 coletores rodam, falha isolada por provider não impede os demais (task 5.6 exercitada em produção, não só em teste)
+- [x] 7.2 `brian attribute` para atribuição manual. Testado com binário real contra cliente inexistente: recusa com erro claro, exit code 1
+- [x] 7.3 `brian costs --client` por cliente e por período, apresentando custo pago e custo equivalente como grandezas distintas, e distinguindo cliente sem consumo de cliente inexistente
+- [x] 7.4 `brian costs --by provider` com soma coerente com o total do mesmo período
+- [x] 7.5 `brian costs --by model` expondo custo equivalente por token, permitindo comparar modelos de providers distintos numa base comum
+- [x] 7.6 `brian costs --unattributed` listando cada registro órfão com provider, modelo, tokens, custo e instante
+- [x] 7.7 `brian costs --export` em formato tabular (CSV) com colunas separadas para custo pago e custo equivalente, mais `billing_mode`, `usage_source` e `cost_source` por registro. Testado com binário real, arquivo CSV gerado e conferido
 
 ## 8. Verificação
 

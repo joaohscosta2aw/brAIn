@@ -231,6 +231,30 @@ ler arquivo local. É o topo da hierarquia D-4, mas com uma trocas real: exige
 `agy` instalado e autenticado no momento da importação, diferente dos demais
 que só precisam do arquivo já existir.
 
+## Incidente real: GeminiAdapter podia travar esperando OAuth
+
+Durante teste manual do binário, `GeminiAdapter::coletar()` invocou `agy`
+com `$HOME` apontando para um diretório de teste sem credencial em cache.
+`agy` iniciou seu próprio fluxo de login (abriu URL de autenticação do
+Google, esperou até 60s por um código colado no terminal). Sem `stdin`
+explicitamente configurado, o processo filho herdou o terminal do processo
+pai — a espera por código ficou visível e um código real chegou a ser
+colado no lugar errado (nunca usado por este adapter). O `$HOME` de teste
+era isolado e foi apagado logo depois; o `~/.antigravity` real do operador
+não foi tocado (confirmado por timestamp de arquivo).
+
+Duas correções, ambas em `src/adapters/gemini.rs`:
+- `stdin(Stdio::null())` — o processo filho nunca herda o terminal do pai,
+  então nunca mais pode capturar um código real digitado por engano.
+- Timeout explícito de 5s no lado do Rust (`aguardar_com_timeout`), porque
+  o timeout de 60s do próprio `agy` continua valendo mesmo com `stdin`
+  nulo — sem isso, `brian import` ficaria parado até um minuto toda vez que
+  o Gemini não estivesse autenticado.
+
+Isso não é específico deste provider: qualquer adapter que venha a invocar
+um processo externo ao vivo (tier `headless_json`) precisa das duas
+proteções. Registrado aqui como padrão a repetir, não como remendo pontual.
+
 ## Achado fora de escopo, registrado para a próxima change
 
 `agy --print "/usage" --output-format json` (e `/quota`, alias interno do

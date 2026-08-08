@@ -12,7 +12,7 @@ pub mod copilot;
 pub mod gemini;
 pub mod grok;
 pub mod qwen;
-mod tempo;
+pub(crate) mod tempo;
 
 /// Estado de cobertura de um provider — task 6.7. Três estados, nunca dois:
 /// `NaoTentado` e `SemFonteUtilizavel` parecem a mesma coisa de longe, mas não
