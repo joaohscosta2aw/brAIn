@@ -201,6 +201,36 @@ sem recriar o banco.
 Reversão: apagar o arquivo de banco. Nenhum efeito colateral externo é produzido por
 esta change — nada é enviado, publicado ou modificado fora da máquina local.
 
+## Gemini: sinal sem rastreabilidade, decisão do autor
+
+O autor decidiu não desprezar consumo de Gemini mesmo sem fonte de detalhe
+por chamada. Duas restrições reais moldaram a implementação:
+
+1. `/usage` só dá **percentual** restante por janela, nunca token absoluto —
+   não há denominador para converter fração em contagem. Por isso os tokens
+   ficam **ausentes** (não zero, não estimados por conversão), `usage_source
+   = Estimated`, sem custo.
+2. `/usage` é **por conta**, não por projeto — diferente de todos os outros
+   adapters desta change, que filtram por `cwd`. Um sinal de "houve consumo"
+   não pode ser honestamente atribuído a este projeto especificamente.
+   `client_id` fica sempre `None` por essa razão estrutural, não por
+   preguiça de atribuir.
+
+**Decisão derivada, minha:** um registro por chamada de `brian import`
+geraria ruído sem fim — toda execução criaria uma linha nova, sem nenhuma
+delas significar algo novo. Em vez disso, o identificador de dedup usa o
+`reset_time` da janela de cota (`gemini-quota:<bucket_id>:<reset_time>`):
+no máximo um sinal por janela de cota em que há evidência real de consumo
+(`remaining_fraction < 1.0`). Reimportar dentro da mesma janela é
+idempotente; a próxima linha só aparece quando a janela seguinte também
+mostrar consumo.
+
+Tier: `headless_json`, não `session_files` — este adapter é o único que
+invoca o provider ao vivo a cada coleta (`agy --print "/usage"`), em vez de
+ler arquivo local. É o topo da hierarquia D-4, mas com uma trocas real: exige
+`agy` instalado e autenticado no momento da importação, diferente dos demais
+que só precisam do arquivo já existir.
+
 ## Achado fora de escopo, registrado para a próxima change
 
 `agy --print "/usage" --output-format json` (e `/quota`, alias interno do

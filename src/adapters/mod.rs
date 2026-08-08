@@ -9,6 +9,7 @@
 pub mod claude;
 pub mod codex;
 pub mod copilot;
+pub mod gemini;
 pub mod grok;
 pub mod qwen;
 mod tempo;
@@ -50,26 +51,19 @@ pub fn cobertura_v0_0() -> Vec<CoberturaProvider> {
         },
         CoberturaProvider {
             provider_id: "gemini",
-            status: StatusCobertura::SemFonteUtilizavel {
-                motivo: "Diferente do ZCode: a CLI (`agy`, Antigravity) existe, é real, e a \
-                         autenticação funciona — headless JSON confirmado com chamada real e \
-                         tokens reais. Oito fontes locais investigadas sem achar uso/custo: \
-                         history.jsonl (prompt digitado), transcript.jsonl (conteúdo de \
-                         conversa), conversations/*.db (blob protobuf sem schema — busca do \
-                         token count real como varint não encontrou nada), \
-                         conversation_summaries.db (metadata sem coluna de uso), cache/*.json \
-                         (4 arquivos, só metadata), jetski_state.pbtxt (só onboarding), \
-                         `agy --help` completo (sem subcomando de uso/billing), logs de CLI \
-                         (só token OAuth, não uso). Confirmado pelo repositório oficial \
-                         (github.com/google-antigravity/antigravity-cli, issues públicas): \
-                         uso é rastreado só no SERVIDOR via endpoint interno \
-                         `v1internal:retrieveUserQuota` (issue #387), sem exportação local \
-                         (`OTLP/OpenTelemetry export` ainda é feature request — issue #366) e \
-                         sem subcomando de CLI que exponha isso (`usage/quota subcommands` \
-                         ainda é feature request — issue #543). Não é falha de investigação: \
-                         é lacuna de produto reconhecida pela própria comunidade do Antigravity"
-                    .into(),
-            },
+            // Verificado, mas com a ressalva mais forte de toda a cobertura:
+            // este adapter não produz ledger no sentido pleno. Oito fontes
+            // locais investigadas, nenhuma com uso/custo por chamada (ver
+            // histórico do design.md) -- confirmado por issues públicas do
+            // repositório oficial que a contabilização é só no servidor
+            // (v1internal:retrieveUserQuota, issue #387), sem exportação
+            // local (issue #366) e sem subcomando dedicado (issue #543).
+            // Decisão consciente do autor: usar `agy --print "/usage"` como
+            // sinal de presença -- sem tokens, sem custo, sem atribuição a
+            // cliente (a cota é por conta, não por projeto). Ver
+            // src/adapters/gemini.rs e design.md, seção "Gemini: sinal sem
+            // rastreabilidade".
+            status: StatusCobertura::Verificado,
         },
         CoberturaProvider {
             provider_id: "grok",
