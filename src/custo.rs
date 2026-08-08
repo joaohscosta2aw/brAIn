@@ -94,8 +94,7 @@ mod tests {
     #[test]
     fn provider_prevalece_sobre_catalogo_como_pago() {
         let c = catalogo(15_000_000);
-        let (custo, source) =
-            resolver_custo(Some(Money(9_990_000)), &tokens(1000), Some(&c));
+        let (custo, source) = resolver_custo(Some(Money(9_990_000)), &tokens(1000), Some(&c));
         assert_eq!(custo.pago, Some(Money(9_990_000)));
         assert_eq!(source, CostSource::Provider);
         // O equivalente continua calculado e presente, não apagado pela

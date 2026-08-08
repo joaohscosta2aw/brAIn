@@ -32,13 +32,13 @@ Depende de 2.
 
 Depende de 2.
 
-- [ ] 4.1 Implementar a cadeia de atribuição ao cliente, permitindo run e fase nulos em observe mode
-- [ ] 4.2 Gravar consumo sem cliente determinável como `unattributed`, nunca descartando nem supondo dono
-- [ ] 4.3 Expor o alarme de consumo não atribuído com tokens e custo, persistente enquanto houver registro órfão
-- [ ] 4.4 Implementar atribuição manual a cliente existente, com registro auditável da origem humana
-- [ ] 4.5 Recusar atribuição a cliente inexistente sem alterar o registro
-- [ ] 4.6 Implementar reatribuição preservando a atribuição anterior de forma auditável
-- [ ] 4.7 Expor leitura de consumo já escopada por cliente na camada de armazenamento, sem caminho que exija filtragem pelo chamador
+- [x] 4.1 Implementar a cadeia de atribuição ao cliente, permitindo run e fase nulos em observe mode (v0.0 não tem conceito de run/fase — não-objetivo explícito da proposal; nenhuma coluna especulativa foi criada para v0.2. A atribuição não depende deles, satisfazendo o requisito sem nada a fazer)
+- [x] 4.2 Gravar consumo sem cliente determinável como `unattributed`, nunca descartando nem supondo dono
+- [x] 4.3 Expor o alarme de consumo não atribuído com tokens e custo, persistente enquanto houver registro órfão (consulta disponível em `Store::nao_atribuidos`; exibição como banner é do grupo 7)
+- [x] 4.4 Implementar atribuição manual a cliente existente, com registro auditável da origem humana
+- [x] 4.5 Recusar atribuição a cliente inexistente sem alterar o registro
+- [x] 4.6 Implementar reatribuição preservando a atribuição anterior de forma auditável
+- [x] 4.7 Expor leitura de consumo já escopada por cliente na camada de armazenamento, sem caminho que exija filtragem pelo chamador
 
 ## 5. Importação
 

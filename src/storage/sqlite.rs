@@ -706,6 +706,45 @@ mod tests {
     }
 
     #[test]
+    fn consulta_de_nao_atribuidos_lista_registros_orfaos() {
+        let s = store();
+        s.gravar_consumo(novo_consumo("k1", "claude", "opus"))
+            .unwrap();
+        s.gravar_consumo(novo_consumo("k2", "codex", "gpt"))
+            .unwrap();
+
+        let orfaos = s
+            .nao_atribuidos(Periodo {
+                desde: Instante(0),
+                ate: None,
+            })
+            .unwrap();
+        assert_eq!(orfaos.len(), 2);
+        assert!(orfaos.iter().all(|r| r.client_id.is_none()));
+    }
+
+    #[test]
+    fn ledger_integro_nao_tem_consumo_sem_dono() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        let r = s
+            .gravar_consumo(novo_consumo("k1", "claude", "opus"))
+            .unwrap();
+        s.atribuir(&r.id, "xpto").unwrap();
+
+        let orfaos = s
+            .nao_atribuidos(Periodo {
+                desde: Instante(0),
+                ate: None,
+            })
+            .unwrap();
+        assert!(
+            orfaos.is_empty(),
+            "ledger totalmente atribuído não deve soar alarme"
+        );
+    }
+
+    #[test]
     fn verificar_integridade_detecta_violacao() {
         let s = store();
         // Insere direto via SQL para simular um dado corrompido que o
