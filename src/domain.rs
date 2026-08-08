@@ -90,8 +90,25 @@ pub struct Money(pub i64);
 impl Money {
     pub const ZERO: Money = Money(0);
 
-    pub fn de_unidades(unidades: f64) -> Self {
-        Money((unidades * 1_000_000.0).round() as i64)
+    /// Converte um valor em unidades da moeda.
+    ///
+    /// Devolve `None` quando o valor não é representável: `NaN`, infinito, ou
+    /// fora da faixa de micro-unidades.
+    ///
+    /// **Não use `as` direto aqui.** O cast de `f64` para `i64` em Rust satura
+    /// silenciosamente — `NaN` vira `0` e infinito vira `i64::MAX`. Num caminho
+    /// de faturamento isso transforma custo desconhecido em cobrança de zero,
+    /// que é exatamente o que o spec proíbe ao separar ausente, zero e
+    /// desconhecido.
+    pub fn de_unidades(unidades: f64) -> Option<Self> {
+        if !unidades.is_finite() {
+            return None;
+        }
+        let micros = (unidades * 1_000_000.0).round();
+        if micros < i64::MIN as f64 || micros > i64::MAX as f64 {
+            return None;
+        }
+        Some(Money(micros as i64))
     }
 
     pub fn em_unidades(&self) -> f64 {
@@ -209,8 +226,8 @@ mod tests {
     #[test]
     fn pago_e_equivalente_coexistem() {
         let c = Custo {
-            pago: Some(Money::de_unidades(1.84)),
-            equivalente_api: Some(Money::de_unidades(4.61)),
+            pago: Some(Money::de_unidades(1.84).unwrap()),
+            equivalente_api: Some(Money::de_unidades(4.61).unwrap()),
         };
         assert_ne!(c.pago, c.equivalente_api);
         assert!(c.pago.is_some() && c.equivalente_api.is_some());
@@ -220,13 +237,27 @@ mod tests {
     fn assinatura_tem_equivalente_sem_pago() {
         let c = Custo {
             pago: None,
-            equivalente_api: Some(Money::de_unidades(4.61)),
+            equivalente_api: Some(Money::de_unidades(4.61).unwrap()),
         };
         assert!(c.pago.is_none(), "assinatura não tem custo por chamada");
         assert!(
             c.equivalente_api.is_some(),
             "os tokens são conhecidos, logo o equivalente é calculável"
         );
+    }
+
+    #[test]
+    fn valor_nao_representavel_nunca_vira_zero() {
+        // Um cast `as` direto devolveria 0 para NaN e i64::MAX para infinito,
+        // transformando custo desconhecido em cobranca. Caminho do dinheiro e RED.
+        assert_eq!(Money::de_unidades(f64::NAN), None);
+        assert_eq!(Money::de_unidades(f64::INFINITY), None);
+        assert_eq!(Money::de_unidades(f64::NEG_INFINITY), None);
+        assert_eq!(Money::de_unidades(1e300), None);
+        assert_eq!(Money::de_unidades(-1e300), None);
+
+        assert_eq!(Money::de_unidades(0.0), Some(Money::ZERO));
+        assert_eq!(Money::de_unidades(1.84), Some(Money(1_840_000)));
     }
 
     #[test]
@@ -254,7 +285,7 @@ mod tests {
     #[test]
     fn unknown_com_equivalente_e_violacao() {
         let mut r = base();
-        r.custo.equivalente_api = Some(Money::de_unidades(1.0));
+        r.custo.equivalente_api = Some(Money::de_unidades(1.0).unwrap());
         assert!(
             r.violacoes()
                 .contains(&"cost_source=unknown mas há equivalente calculado")
