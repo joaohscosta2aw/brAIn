@@ -56,11 +56,15 @@ Nunca workflow, UI ou learning antes de D-16 verde.
 
 | Assunto | Fonte |
 |---|---|
+| Comportamento aprovado | `openspec/specs/` |
+| Change ativa | `openspec/changes/` — descubra com `openspec list` |
 | Missão, princípios, fronteiras | `docs/PREMISSAS-BASICAS.md` |
 | Decisões travadas | `docs/DECISIONS.md` |
+| O que posso decidir sozinho; o que persistir | `docs/harness/autonomia-e-memoria.md` |
+| Vou implementar | `docs/harness/protocolo-implementacao.md` |
+| Vou revisar | `docs/harness/protocolo-revisao.md` |
 | Arquitetura, subsistemas, schema SQLite | `BRIAN-BLUEPRINT-V1.md` |
 | Glossário do domínio | `BRIAN-BLUEPRINT-V1.md` §96 |
-| Missão de especificação em curso | `Prompts/PrimeirosPassos.md` |
 | Política de ferramentas e autoridade | `Prompts/ToolingAndContextPolicy,md` |
 
 ## Hipótese, não premissa
@@ -70,9 +74,13 @@ Isolada por construção: nada pode depender dela até o experimento confirmar.
 
 ## Quando perguntar (RED)
 
-Confirme com humano antes de: alterar comportamento especificado, contratos
-públicos, segurança, perda de dados, nova dependência crítica, mudar requisito
-do blueprint, ou tocar D-16 / D-17 / D-10.
+Confirme com humano antes de: alterar comportamento especificado, tocar qualquer
+decisão D-1..D-17, mexer no **caminho do dinheiro** (cálculo de custo, atribuição,
+base de faturamento), contrato de CLI, esquema com dados reais, segurança ou
+secrets, nova dependência crítica, enviar dado para fora da máquina, ou mudar
+requisito do blueprint.
+
+Classificação completa em `docs/harness/autonomia-e-memoria.md`.
 
 ## Ferramentas
 
