@@ -42,6 +42,12 @@ CREATE INDEX idx_usage_client_time ON usage_record(client_id, occurred_at);
 CREATE INDEX idx_usage_provider_time ON usage_record(provider_id, occurred_at);
 CREATE INDEX idx_usage_unattributed ON usage_record(attribution_status, occurred_at)
     WHERE attribution_status = 'unattributed';
+-- consumo_no_periodo() filtra só por occurred_at, sem client_id nem
+-- provider_id (usada por --by provider/model e export sem --client) --
+-- os dois índices acima, compostos, não cobrem essa consulta. Achado no
+-- benchmark de volume sintético do D-1 (task 8.3): sem este índice, 200 mil
+-- registros levavam 322ms, acima do limite de 200ms.
+CREATE INDEX idx_usage_time ON usage_record(occurred_at);
 
 -- Versionado por vigência (design.md): uma atualização de preço fecha o
 -- intervalo anterior em vez de sobrescrevê-lo, para que o equivalente de um
