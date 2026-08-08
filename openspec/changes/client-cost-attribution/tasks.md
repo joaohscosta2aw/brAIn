@@ -26,7 +26,7 @@ Depende de 2.
 - [x] 3.5 Marcar `cost_source = unknown` apenas quando não há custo do provider nem entrada de catálogo, sem registrar zero em nenhum dos dois campos
 - [x] 3.6 Implementar supersessão auditável: quando o custo pago chega depois, o valor e a fonte anteriores permanecem recuperáveis
 - [x] 3.7 Garantir que nenhuma apresentação exiba o equivalente como valor pago — verificável por teste que falha se os dois forem somados num único número
-- [ ] 3.8 Garantir que agregações informem a composição por fonte e destaquem a parcela sem catálogo, que é receita não faturável (pertence à camada de apresentação — grupo 7, comandos)
+- [x] 3.8 Garantir que agregações informem a composição por fonte e destaquem a parcela sem catálogo, que é receita não faturável (`comandos::formatar_agrupado` expõe `registros_custo_desconhecido` por grupo, testado em `agregar_conta_custo_desconhecido_separadamente`)
 
 ## 4. Atribuição
 
