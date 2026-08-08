@@ -201,6 +201,19 @@ sem recriar o banco.
 Reversão: apagar o arquivo de banco. Nenhum efeito colateral externo é produzido por
 esta change — nada é enviado, publicado ou modificado fora da máquina local.
 
+## Achado fora de escopo, registrado para a próxima change
+
+`agy --print "/usage" --output-format json` (e `/quota`, alias interno do
+mesmo comando) devolve dado real de cota: `remaining_fraction` e
+`reset_time` por grupo de modelo (Gemini; Claude e GPT via Antigravity),
+janelas `weekly` e `5h`. É fonte limpa e scriptável — mas responde "quanto
+resta da minha cota", não "quanto custou cada chamada, atribuído a quem".
+Não serve a `ColetorDeUso::coletar(periodo)` desta change (ledger por
+chamada), mas é candidato direto para `capacity-windows-and-plans`, que
+precisa exatamente de janelas de capacidade e percentual restante — a
+mesma forma de dado, para o mesmo provider que hoje é `SemFonteUtilizavel`
+para atribuição de custo.
+
 ## Open Questions
 
 - Retenção do ledger a longo prazo (arquivamento de registros antigos). Não afeta
