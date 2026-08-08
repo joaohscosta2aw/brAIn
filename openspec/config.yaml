@@ -1,0 +1,41 @@
+schema: spec-driven
+
+context: |
+  BrIAn — plano de controle de engenharia de IA. NAO e um coding agent.
+
+  Verdade canonica: AGENTS.md (leia antes de propor qualquer coisa).
+  Lei do repo: docs/PREMISSAS-BASICAS.md. Decisoes travadas: docs/DECISIONS.md.
+  Blueprint: BRIAN-BLUEPRINT-V1.md — BRIAN-BLUEPRINT.md e historico, nao implementar.
+
+  Estagio atual: v0.0, apenas capacidade e custo (D-16). Continuidade (D-17) e v0.1;
+  run/worktree e v0.2; router/UI e v0.3. Nao especifique subsistemas de versoes futuras.
+
+  Ordem dos primeiros changes: client-cost-attribution → capacity-windows-and-plans
+  → context-and-identity-switching → continuity-pack-handoff → isolated-tracked-run.
+
+rules:
+  proposal:
+    - "Responda o checklist de conformidade de PREMISSAS-BASICAS.md §16: respeita M1-M6 e OP-1..OP-8? toca D-16 ou D-17? viola D-10? depende de H-1?"
+    - "Se a proposta depende de H-1 (Context Governor), ela esta errada por construcao: H-1 e hipotese isolada e nada pode depender dela."
+    - "Declare a versao alvo (v0.0..v1.0). Nada precede D-16 verde."
+    - "Inclua secao de nao-objetivos. Escopo que nao envolve N providers x M clientes x T tempo e violacao de D-10."
+  spec:
+    - "Requisitos descrevem comportamento observavel e testavel, nunca implementacao."
+    - "Cenarios em GIVEN/WHEN/THEN. Inclua unhappy paths e failure modes; nao gere cenarios redundantes para inflar cobertura aparente."
+    - "Todo dado de uso ou custo carrega fonte rotulada: provider | brian_measured | estimated | unknown. Fontes nunca se misturam sem rotulo (D-6)."
+    - "Consumo sem cliente atribuido e `unattributed`: alarme observavel, nunca estado normal silencioso."
+    - "Isolamento entre clientes e negado por construcao, nao por filtro — especifique a negacao, nao a filtragem."
+  design:
+    - "Justifique apenas decisoes que D-1..D-17 nao cobrem. Decisao ja travada nao se rediscute: cite o ID."
+    - "Persistencia de estado precede qualquer efeito colateral externo (D-12)."
+  tasks:
+    - "Cada task verificavel isoladamente. Declare dependencias entre tasks."
+
+operations:
+  apply:
+    guidance:
+      - "A solucao mais simples que satisfaca a spec. Nao generalize antes de necessidade real."
+      - "Mudanca de comportamento especificado volta para a spec, nunca acontece silenciosamente no codigo."
+  archive:
+    guidance:
+      - "Registre apenas decisoes que um agente futuro poderia razoavelmente tomar diferente sem conhecer o historico."
