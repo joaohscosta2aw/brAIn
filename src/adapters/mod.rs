@@ -50,18 +50,23 @@ pub fn cobertura_v0_0() -> Vec<CoberturaProvider> {
         CoberturaProvider {
             provider_id: "gemini",
             status: StatusCobertura::SemFonteUtilizavel {
-                motivo: "Diferente do ZCode: a CLI (`agy`, Antigravity) existe, é real, \
-                         e a autenticação funciona — headless JSON confirmado com \
-                         chamada real e tokens reais. O que falta é uma superfície de \
-                         histórico consultável. Investigado: history.jsonl (histórico \
-                         de prompt digitado, não uso), o SQLite em \
-                         ~/.gemini/antigravity-cli/conversations/*.db (colunas `data` \
-                         são blob protobuf sem schema — busca do token count real da \
-                         chamada de teste como varint no blob não encontrou nada), e \
-                         transcript.jsonl em brain/<id>/.system_generated/logs/ (é \
-                         transcrição de conversa — conteúdo, não uso, fora do escopo \
-                         por construção). Sem o .proto oficial do Antigravity, decodificar \
-                         os blobs de forma confiável não é viável nesta investigação"
+                motivo: "Diferente do ZCode: a CLI (`agy`, Antigravity) existe, é real, e a \
+                         autenticação funciona — headless JSON confirmado com chamada real e \
+                         tokens reais. Oito fontes locais investigadas sem achar uso/custo: \
+                         history.jsonl (prompt digitado), transcript.jsonl (conteúdo de \
+                         conversa), conversations/*.db (blob protobuf sem schema — busca do \
+                         token count real como varint não encontrou nada), \
+                         conversation_summaries.db (metadata sem coluna de uso), cache/*.json \
+                         (4 arquivos, só metadata), jetski_state.pbtxt (só onboarding), \
+                         `agy --help` completo (sem subcomando de uso/billing), logs de CLI \
+                         (só token OAuth, não uso). Confirmado pelo repositório oficial \
+                         (github.com/google-antigravity/antigravity-cli, issues públicas): \
+                         uso é rastreado só no SERVIDOR via endpoint interno \
+                         `v1internal:retrieveUserQuota` (issue #387), sem exportação local \
+                         (`OTLP/OpenTelemetry export` ainda é feature request — issue #366) e \
+                         sem subcomando de CLI que exponha isso (`usage/quota subcommands` \
+                         ainda é feature request — issue #543). Não é falha de investigação: \
+                         é lacuna de produto reconhecida pela própria comunidade do Antigravity"
                     .into(),
             },
         },
