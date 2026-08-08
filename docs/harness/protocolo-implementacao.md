@@ -43,6 +43,14 @@ cargo test
 Confronte o resultado contra os cenários do spec, não contra sua própria
 expectativa.
 
+**Rode local, não confie só no CI.** Rodar `./scripts/verificar-invariantes.sh`
+localmente antes de cada commit é mais barato que descobrir pelo CI dois
+commits depois — já aconteceu nesta change: um teste que somava deliberadamente
+`pago + equivalente_api` para provar que são diferentes disparou o próprio guard
+que a soma proíbe, dois commits seguidos passaram vermelhos no CI antes de
+alguém notar. O guard funcionou; a disciplina de checar antes de empurrar, não.
+Depois de cada `git push`, confirme com `gh run list --limit 1`.
+
 Um cenário do spec que você não consegue exercitar é sinal de uma destas três
 coisas, e vale descobrir qual: o código está incompleto, o cenário está mal
 escrito, ou o requisito é inverificável como está.
