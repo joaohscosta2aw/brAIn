@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="en" class="no-js">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="generator" content="better-harness codex-html">
+  <title>Harness Insights · BrIAn</title>
+  <style>
+    :root { color-scheme: dark; --bg:#111315; --panel:#1a1d20; --panel-2:#21252a; --line:#31363d; --text:#f5f7fa; --muted:#9aa3ad; --blue:#6cb8ff; --blue-2:#1b6ca8; --orange:#ff9a5a; --green:#53d69b; --red:#ff6b6b; }
+    * { box-sizing:border-box; }
+    html { background:var(--bg); scroll-behavior:smooth; }
+    .cjk-phrase { white-space:nowrap; }
+    body { margin:0; min-width:320px; font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:var(--text); background:radial-gradient(circle at 12% -10%,#22364a 0,transparent 34rem),var(--bg); line-height:1.55; }
+    .sr-only { position:absolute!important; width:1px!important; height:1px!important; padding:0!important; margin:-1px!important; overflow:hidden!important; clip:rect(0,0,0,0)!important; white-space:nowrap!important; border:0!important; }
+    body::before { content:""; position:fixed; inset:0; pointer-events:none; opacity:.22; background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px); background-size:28px 28px; }
+    main { position:relative; width:min(1180px,calc(100% - 40px)); margin:0 auto; padding:52px 0 88px; }
+    h1,h2,h3,p { margin-top:0; }
+    .eyebrow,.label { color:var(--blue); font-size:12px; font-weight:700; letter-spacing:.11em; text-transform:uppercase; }
+    .hero { display:grid; grid-template-columns:minmax(0,1fr) 190px; gap:36px; align-items:end; min-height:270px; padding:42px; border:1px solid var(--line); border-radius:28px; background:linear-gradient(135deg,rgba(36,43,51,.96),rgba(21,24,27,.94)); box-shadow:0 28px 70px rgba(0,0,0,.28); }
+    .hero h1 { margin:12px 0 10px; font-size:clamp(42px,7vw,82px); line-height:.96; letter-spacing:-.055em; }
+    .hero p { max-width:760px; margin-bottom:22px; color:#c9d0d8; font-size:18px; }
+    .hero-tags { display:flex; flex-wrap:wrap; gap:8px; }
+    .score-orbit { width:174px; aspect-ratio:1; display:grid; place-content:center; text-align:center; border:14px solid #343a41; border-top-color:var(--blue); border-right-color:var(--blue-2); border-radius:50%; background:#1a2026; box-shadow:inset 0 0 0 1px var(--line); }
+    .score-orbit strong { font-size:44px; line-height:1; }
+    .score-orbit > span { width:110px; margin-top:7px; color:var(--muted); font-size:12px; }
+    .pill { display:inline-flex; align-items:center; min-height:26px; padding:3px 10px; border-radius:999px; color:#d4dae0; background:#30353b; font-size:12px; font-weight:700; }
+    .pill.accent { color:#c9e8ff; background:#164e75; }.pill.good { color:#c9f9e5; background:#165c43; }.pill.warning { color:#ffe1c8; background:#754322; }.pill.danger { color:#ffd4d4; background:#762e31; }.pill.muted,.pill.neutral { color:#c8cdd3; background:#34383d; }
+    .metrics { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin:18px 0 54px; }
+    .metric { min-height:126px; padding:22px 24px; border:1px solid var(--line); border-radius:20px; background:rgba(30,34,38,.9); }
+    .metric > span,.metric > small { display:block; color:var(--muted); }.metric > strong { display:block; margin:5px 0 2px; font-size:34px; line-height:1.1; }.metric > small { font-size:12px; }
+    .section { margin-top:64px; scroll-margin-top:24px; }.section-heading { display:flex; justify-content:space-between; gap:30px; align-items:end; margin-bottom:20px; }.section-heading h2 { margin:5px 0 0; font-size:30px; letter-spacing:-.025em; }.section-heading > p { max-width:420px; margin:0; color:var(--muted); text-align:right; font-size:14px; }
+    .dimension-grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; }.dimension-card { min-height:230px; padding:19px; border:1px solid var(--line); border-radius:19px; background:linear-gradient(180deg,var(--panel-2),var(--panel)); }.dimension-top { display:flex; min-height:52px; justify-content:space-between; gap:8px; align-items:flex-start; font-weight:700; }.score-line { display:flex; align-items:baseline; gap:4px; margin-top:14px; }.score-line strong { font-size:34px; }.score-line span { color:var(--muted); font-size:12px; }.track { height:8px; margin:8px 0 16px; overflow:hidden; border-radius:999px; background:#30353a; }.track i { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg,var(--blue-2),var(--blue)); }.dimension-card p { margin:0; color:var(--muted); font-size:13px; }
+    .activity-layout { display:grid; grid-template-columns:minmax(0,1.8fr) minmax(230px,.7fr); gap:14px; }.activity-panel,.subpanel,.finding,.custom-grid article,.evidence-grid,.evidence-note { border:1px solid var(--line); border-radius:19px; background:var(--panel); }.activity-panel { display:flex; min-width:0; flex-direction:column; justify-content:center; padding:22px; overflow:hidden; }.heat-scroll { width:100%; min-width:0; overflow-x:auto; padding-bottom:8px; }.heatmap,.heat-axis { display:grid; grid-template-columns:repeat(var(--heat-days),minmax(13px,1fr)); column-gap:4px; min-width:var(--heat-min-width); }.heatmap { align-items:center; }.heat-cell { width:13px; height:13px; justify-self:center; border-radius:3px; background:#2b3035; }.heat-cell.l1{background:#174d70}.heat-cell.l2{background:#206f9e}.heat-cell.l3{background:#319bd1}.heat-cell.l4{background:#70c9ff}.heat-axis { margin-top:10px; color:var(--muted); font-size:10px; }.heat-tick { justify-self:center; white-space:nowrap; }.heat-tick.first { justify-self:start; }.heat-tick.last { justify-self:end; }.heatmap-empty { color:var(--muted); }.stacked-metrics { display:grid; gap:14px; }.stacked-metrics .metric { min-height:0; }
+    .two-column { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:14px; }.subpanel { padding:22px; }.subpanel h3 { font-size:15px; }.usage-list { display:grid; gap:12px; }.usage-row { display:grid; grid-template-columns:minmax(100px,.75fr) 1fr 52px; gap:12px; align-items:center; font-size:12px; }.usage-row > span { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }.usage-row i { height:7px; overflow:hidden; border-radius:999px; background:#30353a; }.usage-row b { display:block; height:100%; background:linear-gradient(90deg,var(--blue-2),var(--blue)); }.usage-row strong { text-align:right; }
+    .finding-list { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }.finding-card { min-width:0; min-height:220px; display:flex; flex-direction:column; padding:18px; border:1px solid var(--line); border-radius:19px; background:linear-gradient(180deg,#1c2329,var(--panel)); }.finding-card-main { display:grid; gap:10px; }.finding-meta { display:flex; flex-wrap:wrap; gap:7px; }.finding-card h3 { min-height:2.8em; margin:0; display:-webkit-box; overflow:hidden; font-size:17px; line-height:1.4; -webkit-box-orient:vertical; -webkit-line-clamp:2; }.finding-preview { margin:0; color:#c7ced6; display:-webkit-box; overflow:hidden; font-size:13px; line-height:1.55; -webkit-box-orient:vertical; -webkit-line-clamp:2; }.finding-actions,.dialog-actions { display:flex; flex-wrap:wrap; justify-content:space-between; gap:10px; margin-top:auto; padding-top:16px; }.action-button { min-height:38px; padding:8px 13px; border:1px solid transparent; border-radius:10px; color:var(--text); background:#30363d; font:inherit; font-size:13px; font-weight:700; cursor:pointer; }.action-button:hover { filter:brightness(1.12); }.action-button:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }.action-button.secondary { color:#cceaff; border-color:#286d9b; background:#164e75; }.action-button.ghost { color:#d4dae0; border-color:var(--line); background:transparent; }.finding-dialog,.manual-copy-dialog { width:min(880px,calc(100vw - 32px)); max-height:calc(100vh - 32px); overflow:auto; padding:24px; border:1px solid var(--line); border-radius:20px; color:var(--text); background:var(--panel); box-shadow:0 30px 90px rgba(0,0,0,.55); }.finding-dialog::backdrop,.manual-copy-dialog::backdrop { background:rgba(4,8,12,.72); }.dialog-heading { display:flex; justify-content:space-between; gap:18px; align-items:flex-start; }.dialog-heading h3 { margin:6px 0 0; font-size:24px; }.dialog-section { margin-top:18px; }.dialog-section p { margin:7px 0 0; color:#d1d7de; }.dialog-section ol,.dialog-section ul { margin:8px 0 0; padding-left:22px; color:#d1d7de; }.manual-copy-dialog textarea { width:100%; min-height:260px; margin-top:14px; padding:14px; resize:vertical; border:1px solid var(--line); border-radius:12px; color:var(--text); background:#11161b; font:13px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace; }.no-js .finding-actions,.no-js .manual-copy-dialog { display:none!important; }.no-js .finding-dialog:not([open]) { display:block; position:static; width:auto; max-height:none; margin-top:16px; box-shadow:none; }
+    .suggestion-block { margin-top:28px; padding-top:24px; border-top:1px solid var(--line); }.suggestion-heading { display:flex; justify-content:space-between; gap:20px; align-items:end; margin-bottom:14px; }.suggestion-heading h3 { margin:4px 0 0; font-size:20px; }.suggestion-heading p { margin:0; color:var(--muted); font-size:12px; }.suggestion-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }.suggestion { padding:18px; border:1px solid var(--line); border-radius:17px; background:linear-gradient(180deg,#1b252d,var(--panel)); }.suggestion-top { display:flex; justify-content:space-between; gap:8px; }.suggestion h3 { margin:13px 0 7px; font-size:16px; }.suggestion > p { color:#c7ced6; font-size:13px; }.suggestion dl { display:grid; gap:9px; margin:14px 0 0; }.suggestion dl div { display:grid; gap:2px; }.suggestion dt { color:var(--muted); font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }.suggestion dd { margin:0; color:#d7dde4; font-size:12px; }
+    .custom-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; }.custom-grid article { display:flex; gap:14px; align-items:center; padding:18px; }.custom-grid h3 { margin:0; font-size:15px; }.custom-grid p { margin:3px 0 0; color:var(--muted); font-size:12px; }.custom-mark { display:grid; flex:0 0 38px; aspect-ratio:1; place-content:center; border-radius:12px; color:#d9efff; background:#164e75; font-weight:800; }
+    .evidence-grid { display:grid; grid-template-columns:repeat(3,1fr); overflow:hidden; }.evidence-grid div { padding:20px; border-right:1px solid var(--line); border-bottom:1px solid var(--line); }.evidence-grid > div > span,.evidence-grid > div > strong { display:block; }.evidence-grid > div > span { color:var(--muted); font-size:12px; }.evidence-grid > div > strong { margin-top:4px; }.evidence-note { margin-top:14px; padding:20px; }.method-note,.empty { color:var(--muted); }.method-note { max-width:800px; margin:18px 0 0; font-size:13px; }
+    footer { margin-top:64px; padding-top:20px; border-top:1px solid var(--line); color:var(--muted); font-size:12px; }
+    @media (max-width:1000px) { .finding-list{grid-template-columns:repeat(2,minmax(0,1fr))} }
+    @media (max-width:900px) { .metrics,.dimension-grid{grid-template-columns:repeat(2,1fr)}.activity-layout,.two-column{grid-template-columns:1fr}.evidence-grid{grid-template-columns:repeat(2,1fr)} }
+    @media (max-width:680px) { .finding-list{grid-template-columns:1fr}.finding-card{min-height:0} }
+    @media (max-width:620px) { main{width:min(100% - 24px,1180px);padding-top:18px}.hero{grid-template-columns:1fr;min-height:0;padding:25px;border-radius:22px}.hero h1{font-size:44px}.hero p{font-size:15px}.score-orbit{width:126px}.score-orbit strong{font-size:34px}.metrics{grid-template-columns:1fr;margin-bottom:42px}.metric{min-height:0}.section{margin-top:46px}.section-heading,.suggestion-heading{display:block}.section-heading > p,.suggestion-heading > p{text-align:left;margin-top:8px}.dimension-grid{grid-template-columns:1fr}.dimension-card{min-height:0}.evidence-grid{grid-template-columns:1fr}.usage-row{grid-template-columns:minmax(92px,.7fr) 1fr 44px}.finding-dialog{padding:18px}.dialog-heading{display:grid} }
+    @media print { :root{color-scheme:light;--bg:#fff;--panel:#fff;--panel-2:#f6f8fa;--line:#d8dee4;--text:#111;--muted:#59636e}body{background:#fff}body::before{display:none}.hero{box-shadow:none}.section{break-inside:avoid}.finding-list{display:block}.finding-card{margin-bottom:16px;break-inside:avoid}.finding-actions,.dialog-actions,.manual-copy-dialog{display:none!important}.finding-dialog:not([open]){display:block!important;position:static;width:auto;max-height:none;margin-top:16px;box-shadow:none} }
+  </style>
+</head>
+<body>
+<div id="copy-status" class="sr-only" role="status" aria-live="polite"></div>
+<main id="harness-report" data-report-mode="codex-html">
+<header class="hero" data-section="overview">
+    <div class="hero-copy">
+      <span class="eyebrow">Harness Insights · Codex HTML</span>
+      <h1>BrIAn</h1>
+      <p>O mapa de contexto e a especificação são fortes: AGENTS.md roteia por assunto, a change tem critérios verificáveis e vários requisitos já vêm com o teste embutido. O que falta é mecanismo. Toda regra do projeto vive em prosa, nenhum portão automatizado existe, o ambiente de execução não está declarado em lugar nenhum, e a parte que o próprio design nomeia como de maior risco — os cinco adapters de provider — é a única sem critério de pronto verificável.</p>
+      <div class="hero-tags"><span class="pill accent">agent-work-loop-v4</span><span class="pill muted">Evidence-bound</span></div>
+    </div>
+    <div class="score-orbit"><strong>5</strong><span>reviewed dimensions</span></div>
+  </header>
+  <div class="metrics">
+    <div class="metric">
+    <span>Loop Effectiveness</span>
+    <strong>54 / 100</strong>
+    <small>Changes after later task outcomes</small>
+  </div>
+    <div class="metric">
+    <span>Asset Health / Repair Progress</span>
+    <strong>0 / 100</strong>
+    <small>0 verified · 0 partial · 9 pending</small>
+  </div>
+    <div class="metric">
+    <span>Sessions analyzed</span>
+    <strong>0 / 0</strong>
+    
+  </div>
+    <div class="metric">
+    <span>Findings</span>
+    <strong>9</strong>
+    <small>3 High · 3 Medium</small>
+  </div>
+  </div>
+  <section class="section" data-section="fluency" aria-labelledby="section-fluency">
+    <div class="section-heading">
+      <div><span class="eyebrow">01 · Readiness</span><h2 id="section-fluency">Five-dimension fluency</h2></div>
+      <p>Scores and states come from the reviewed source.</p>
+    </div>
+    <div class="dimension-grid">
+    <article class="dimension-card" data-dimension-id="task-understanding">
+        <div class="dimension-top"><span>Task Understanding</span><span class="pill muted">Reviewed</span></div>
+        <div class="score-line"><strong>72</strong><span>/ 100</span></div>
+        <div class="track" role="progressbar" aria-label="Task Understanding 72 of 100" aria-valuemin="0" aria-valuemax="100" aria-valuenow="72"><i style="width:72%"></i></div>
+        <p>Dimensão mais forte. AGENTS.md carrega leis, fronteira e índice de roteamento; a change declara não-objetivos e conformidade. Limitado por duas rotas do mapa que não resolvem e por uma afirmação falsa no contexto sempre-carregado.</p>
+      </article>
+<article class="dimension-card" data-dimension-id="controlled-execution">
+        <div class="dimension-top"><span>Controlled Execution</span><span class="pill muted">Reviewed</span></div>
+        <div class="score-line"><strong>45</strong><span>/ 100</span></div>
+        <div class="track" role="progressbar" aria-label="Controlled Execution 45 of 100" aria-valuemin="0" aria-valuemax="100" aria-valuenow="45"><i style="width:45%"></i></div>
+        <p>Nenhum manifesto, toolchain, versão, comando de setup, build, teste ou reset existe. Os protocolos mandam &#39;rode os testes&#39; e &#39;compila, lint, formatação&#39; sem nomear um comando. Ausência material, não indisponibilidade de coleta.</p>
+      </article>
+<article class="dimension-card" data-dimension-id="change-validation">
+        <div class="dimension-top"><span>Change Validation</span><span class="pill muted">Reviewed</span></div>
+        <div class="score-line"><strong>48</strong><span>/ 100</span></div>
+        <div class="track" role="progressbar" aria-label="Change Validation 48 of 100" aria-valuemin="0" aria-valuemax="100" aria-valuenow="48"><i style="width:48%"></i></div>
+        <p>A intenção de cobertura é acima da média e alguns requisitos já embutem o teste que os falseia. Mas nenhum portão mecânico existe, e todos os episódios de mudança da sessão fecharam sem checagem revisada.</p>
+      </article>
+<article class="dimension-card" data-dimension-id="reliable-delivery">
+        <div class="dimension-top"><span>Reliable Delivery</span><span class="pill muted">Reviewed</span></div>
+        <div class="score-line"><strong>50</strong><span>/ 100</span></div>
+        <div class="track" role="progressbar" aria-label="Reliable Delivery 50 of 100" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"><i style="width:50%"></i></div>
+        <p>Commits diretos, sem PR, sem proteção de branch, sem CODEOWNERS. A evidência de aceitação prevista é o próprio implementador marcar checkbox. O design acerta ao declarar ausência de efeito externo e reversão por deleção do banco.</p>
+      </article>
+<article class="dimension-card" data-dimension-id="learning-capture">
+        <div class="dimension-top"><span>Learning Capture</span><span class="pill muted">Reviewed</span></div>
+        <div class="score-line"><strong>55</strong><span>/ 100</span></div>
+        <div class="track" role="progressbar" aria-label="Learning Capture 55 of 100" aria-valuemin="0" aria-valuemax="100" aria-valuenow="55"><i style="width:55%"></i></div>
+        <p>Mecanismos duráveis existem e são bem desenhados (política L0-L3, DECISIONS.md, protocolos). Nenhum foi exercitado ainda, e não há duas Task Episodes comparáveis para sustentar qualquer alegação de efeito.</p>
+      </article>
+  </div>
+  </section>
+  
+  <section class="section" data-section="findings" aria-labelledby="section-findings">
+    <div class="section-heading">
+      <div><span class="eyebrow">03 · Action</span><h2 id="section-findings">Findings and recommendations</h2></div>
+      <p>9 findings · 0 suggestions</p>
+    </div>
+    <div class="finding-list"><article class="finding-card" data-finding-id="adapters-sem-criterio-de-pronto">
+      <div class="finding-card-main">
+        <div class="finding-meta">
+          <span class="pill danger">High</span>
+          <span class="pill neutral">Change Validation</span>
+        </div>
+        <h3>A parte de maior risco da change é a única sem critério verificável de pronto</h3>
+        <p class="finding-preview">O design.md nomeia &#39;cinco fontes de uso não documentadas e instáveis&#39; como o maior risco de cronograma, e tasks.md §6 endereça isso com cinco itens cuja definição de pronto é &#39;identificar a fonte de uso, declarar tier e campos disponíveis&#39;. Não há cenário de spec para nenhum provider concreto, nem fixture ou amostra capturada prevista, e §8.1 só exige cobrir cenários que são todos agnósticos de provider. Um adapter pode ser marcado como concluído declarando tier degradado sem nunca ter lido dado real, e a lacuna aparece como cobertura declarada em vez de falha.</p>
+      </div>
+      <div class="finding-actions">
+        <button type="button" class="action-button secondary" data-copy-finding="adapters-sem-criterio-de-pronto" aria-label="Copy AI Fix: A parte de maior risco da change é a única sem critério verificável de pronto">Copy AI Fix</button>
+        <button type="button" class="action-button ghost" data-view-finding-dialog="finding-dialog-1" aria-label="View details: A parte de maior risco da change é a única sem critério verificável de pronto">View details</button>
+      </div>
+      <dialog class="finding-dialog" id="finding-dialog-1" data-finding-dialog-id="adapters-sem-criterio-de-pronto" aria-labelledby="finding-dialog-1-title">
+        <div class="dialog-heading">
+          <div><span class="label">Finding details</span><h3 id="finding-dialog-1-title">A parte de maior risco da change é a única sem critério verificável de pronto</h3></div>
+          <span class="pill danger">High</span>
+        </div>
+        <div class="dialog-section"><span class="label">Cause</span><p>O design.md nomeia &#39;cinco fontes de uso não documentadas e instáveis&#39; como o maior risco de cronograma, e tasks.md §6 endereça isso com cinco itens cuja definição de pronto é &#39;identificar a fonte de uso, declarar tier e campos disponíveis&#39;. Não há cenário de spec para nenhum provider concreto, nem fixture ou amostra capturada prevista, e §8.1 só exige cobrir cenários que são todos agnósticos de provider. Um adapter pode ser marcado como concluído declarando tier degradado sem nunca ter lido dado real, e a lacuna aparece como cobertura declarada em vez de falha.</p></div>
+        <div class="dialog-section"><span class="label">Expected Output</span><ol><li>Cada adapter só pode ser marcado concluído contra dado real capturado, e cobertura declarada deixa de ser autocertificada.</li></ol></div>
+        
+        <div class="dialog-actions">
+          <button type="button" class="action-button secondary" data-copy-finding="adapters-sem-criterio-de-pronto" aria-label="Copy AI Fix: A parte de maior risco da change é a única sem critério verificável de pronto">Copy AI Fix</button>
+          <button type="button" class="action-button ghost" data-close-finding-dialog="finding-dialog-1">Close</button>
+        </div>
+      </dialog>
+    </article>
+<article class="finding-card" data-finding-id="ambiente-indefinido-antes-da-fundacao">
+      <div class="finding-card-main">
+        <div class="finding-meta">
+          <span class="pill danger">High</span>
+          <span class="pill neutral">Controlled Execution</span>
+        </div>
+        <h3>O ambiente não está declarado justamente onde a primeira task é a mais cara de desfazer</h3>
+        <p class="finding-preview">A change abre criando esquema SQLite, migrações versionadas e traits de storage — as decisões mais caras de reverter do projeto — e o repositório não declara toolchain, versão de Rust, comando de build, comando de teste, localização do arquivo de banco nem rotina de reset. O protocolo de implementação manda &#39;rode os testes&#39; e o de revisão abre com &#39;compila, lint, formatação, testes passam&#39;, ambos contra um ambiente que ninguém definiu. Além disso, o protocolo prescreve `openspec list` como rota canônica sem que nada declare a CLI OpenSpec como requisito.</p>
+      </div>
+      <div class="finding-actions">
+        <button type="button" class="action-button secondary" data-copy-finding="ambiente-indefinido-antes-da-fundacao" aria-label="Copy AI Fix: O ambiente não está declarado justamente onde a primeira task é a mais cara de desfazer">Copy AI Fix</button>
+        <button type="button" class="action-button ghost" data-view-finding-dialog="finding-dialog-2" aria-label="View details: O ambiente não está declarado justamente onde a primeira task é a mais cara de desfazer">View details</button>
+      </div>
+      <dialog class="finding-dialog" id="finding-dialog-2" data-finding-dialog-id="ambiente-indefinido-antes-da-fundacao" aria-labelledby="finding-dialog-2-title">
+        <div class="dialog-heading">
+          <div><span class="label">Finding details</span><h3 id="finding-dialog-2-title">O ambiente não está declarado justamente onde a primeira task é a mais cara de desfazer</h3></div>
+          <span class="pill danger">High</span>
+        </div>
+        <div class="dialog-section"><span class="label">Cause</span><p>A change abre criando esquema SQLite, migrações versionadas e traits de storage — as decisões mais caras de reverter do projeto — e o repositório não declara toolchain, versão de Rust, comando de build, comando de teste, localização do arquivo de banco nem rotina de reset. O protocolo de implementação manda &#39;rode os testes&#39; e o de revisão abre com &#39;compila, lint, formatação, testes passam&#39;, ambos contra um ambiente que ninguém definiu. Além disso, o protocolo prescreve `openspec list` como rota canônica sem que nada declare a CLI OpenSpec como requisito.</p></div>
+        <div class="dialog-section"><span class="label">Expected Output</span><ol><li>A fundação irreversível é construída sobre um ambiente declarado, não improvisado por quem pegar a task primeiro.</li></ol></div>
+        
+        <div class="dialog-actions">
+          <button type="button" class="action-button secondary" data-copy-finding="ambiente-indefinido-antes-da-fundacao" aria-label="Copy AI Fix: O ambiente não está declarado justamente onde a primeira task é a mais cara de desfazer">Copy AI Fix</button>
+          <button type="button" class="action-button ghost" data-close-finding-dialog="finding-dialog-2">Close</button>
+        </div>
+      </dialog>
+    </article>
+<article class="finding-card" data-finding-id="regras-sem-portao-mecanico">
+      <div class="finding-card-main">
+        <div class="finding-meta">
+          <span class="pill danger">High</span>
+          <span class="pill neutral">Change Validation</span>
+        </div>
+        <h3>Todas as regras do projeto são prosa e o único portão mecânico existente foi removido</h3>
+        <p class="finding-preview">As regras são excepcionalmente concretas — SQL confinado a storage/ (D-9), equivalente nunca somado ao pago, ausente diferente de zero e de desconhecido, isolamento por construção — e dependem inteiramente de o agente lembrar de lê-las. Nenhum CI, pre-commit, config de lint ou formatter existe; o diretório .github/ foi removido durante a curadoria de espelhos de ferramenta. O hook restante é best-effort e só age sobre código que ainda não existe. Na sessão auditada, todos os episódios que produziram mudança fecharam sem checagem revisada: a validação que ocorreu foi por disciplina do operador, e nada teria capturado sua omissão. Isso contradiz o próprio princípio §22 do projeto, que manda preferir regra executável a prosa.</p>
+      </div>
+      <div class="finding-actions">
+        <button type="button" class="action-button secondary" data-copy-finding="regras-sem-portao-mecanico" aria-label="Copy AI Fix: Todas as regras do projeto são prosa e o único portão mecânico existente foi removido">Copy AI Fix</button>
+        <button type="button" class="action-button ghost" data-view-finding-dialog="finding-dialog-3" aria-label="View details: Todas as regras do projeto são prosa e o único portão mecânico existente foi removido">View details</button>
+      </div>
+      <dialog class="finding-dialog" id="finding-dialog-3" data-finding-dialog-id="regras-sem-portao-mecanico" aria-labelledby="finding-dialog-3-title">
+        <div class="dialog-heading">
+          <div><span class="label">Finding details</span><h3 id="finding-dialog-3-title">Todas as regras do projeto são prosa e o único portão mecânico existente foi removido</h3></div>
+          <span class="pill danger">High</span>
+        </div>
+        <div class="dialog-section"><span class="label">Cause</span><p>As regras são excepcionalmente concretas — SQL confinado a storage/ (D-9), equivalente nunca somado ao pago, ausente diferente de zero e de desconhecido, isolamento por construção — e dependem inteiramente de o agente lembrar de lê-las. Nenhum CI, pre-commit, config de lint ou formatter existe; o diretório .github/ foi removido durante a curadoria de espelhos de ferramenta. O hook restante é best-effort e só age sobre código que ainda não existe. Na sessão auditada, todos os episódios que produziram mudança fecharam sem checagem revisada: a validação que ocorreu foi por disciplina do operador, e nada teria capturado sua omissão. Isso contradiz o próprio princípio §22 do projeto, que manda preferir regra executável a prosa.</p></div>
+        <div class="dialog-section"><span class="label">Expected Output</span><ol><li>As invariantes que o projeto mais teme violar passam a ser garantidas por ferramenta, não por memória do agente.</li></ol></div>
+        
+        <div class="dialog-actions">
+          <button type="button" class="action-button secondary" data-copy-finding="regras-sem-portao-mecanico" aria-label="Copy AI Fix: Todas as regras do projeto são prosa e o único portão mecânico existente foi removido">Copy AI Fix</button>
+          <button type="button" class="action-button ghost" data-close-finding-dialog="finding-dialog-3">Close</button>
+        </div>
+      </dialog>
+    </article>
+<article class="finding-card" data-finding-id="revisor-independente-sem-mecanismo">
+      <div class="finding-card-main">
+        <div class="finding-meta">
+          <span class="pill warning">Medium</span>
+          <span class="pill neutral">Reliable Delivery</span>
+        </div>
+        <h3>A exigência de revisor independente não tem nenhum mecanismo que a sustente</h3>
+        <p class="finding-preview">O protocolo de revisão exige revisor independente e revisão humana obrigatória para caminho do dinheiro, segurança, contrato de CLI e qualquer decisão RED. Nenhum desses gatilhos tem mecanismo: sem PR, sem proteção de branch, sem CODEOWNERS, com commits diretos. A única evidência de aceitação prevista é o implementador marcar checkbox no próprio tasks.md. Num projeto cujo produto é atribuição de custo a cliente, o erro que o protocolo mais teme — cobrar o cliente errado — é exatamente o que o processo permite autoaprovar. Atenuante: repositório local de operador único, onde humano e implementador podem ser a mesma pessoa por desenho.</p>
+      </div>
+      <div class="finding-actions">
+        <button type="button" class="action-button secondary" data-copy-finding="revisor-independente-sem-mecanismo" aria-label="Copy AI Fix: A exigência de revisor independente não tem nenhum mecanismo que a sustente">Copy AI Fix</button>
+        <button type="button" class="action-button ghost" data-view-finding-dialog="finding-dialog-4" aria-label="View details: A exigência de revisor independente não tem nenhum mecanismo que a sustente">View details</button>
+      </div>
+      <dialog class="finding-dialog" id="finding-dialog-4" data-finding-dialog-id="revisor-independente-sem-mecanismo" aria-labelledby="finding-dialog-4-title">
+        <div class="dialog-heading">
+          <div><span class="label">Finding details</span><h3 id="finding-dialog-4-title">A exigência de revisor independente não tem nenhum mecanismo que a sustente</h3></div>
+          <span class="pill warning">Medium</span>
+        </div>
+        <div class="dialog-section"><span class="label">Cause</span><p>O protocolo de revisão exige revisor independente e revisão humana obrigatória para caminho do dinheiro, segurança, contrato de CLI e qualquer decisão RED. Nenhum desses gatilhos tem mecanismo: sem PR, sem proteção de branch, sem CODEOWNERS, com commits diretos. A única evidência de aceitação prevista é o implementador marcar checkbox no próprio tasks.md. Num projeto cujo produto é atribuição de custo a cliente, o erro que o protocolo mais teme — cobrar o cliente errado — é exatamente o que o processo permite autoaprovar. Atenuante: repositório local de operador único, onde humano e implementador podem ser a mesma pessoa por desenho.</p></div>
+        <div class="dialog-section"><span class="label">Expected Output</span><ol><li>O caminho do dinheiro deixa de depender de autoaprovação para chegar à branch principal.</li></ol></div>
+        
+        <div class="dialog-actions">
+          <button type="button" class="action-button secondary" data-copy-finding="revisor-independente-sem-mecanismo" aria-label="Copy AI Fix: A exigência de revisor independente não tem nenhum mecanismo que a sustente">Copy AI Fix</button>
+          <button type="button" class="action-button ghost" data-close-finding-dialog="finding-dialog-4">Close</button>
+        </div>
+      </dialog>
+    </article>
+<article class="finding-card" data-finding-id="claude-md-afirma-hooks-inertes">
+      <div class="finding-card-main">
+        <div class="finding-meta">
+          <span class="pill warning">Medium</span>
+          <span class="pill neutral">Task Understanding</span>
+        </div>
+        <h3>O contexto sempre-carregado afirma que os hooks estão inertes, e eles não estão</h3>
+        <p class="finding-preview">CLAUDE.md declara que os hooks são &#39;inertes enquanto não houver código&#39;. A evidência contradiz: os hooks só abortam se `command -v code-review-graph` falhar, o binário resolve no PATH e o diretório é repositório git. Portanto `code-review-graph update` executa a cada Edit e Write — inclusive nos arquivos .md que são hoje o único conteúdo do repositório — com timeout de 30s, e `status` executa a cada início de sessão. Uma afirmação falsa em contexto sempre-carregado desorienta toda decisão futura sobre custo e efeito desses hooks.</p>
+      </div>
+      <div class="finding-actions">
+        <button type="button" class="action-button secondary" data-copy-finding="claude-md-afirma-hooks-inertes" aria-label="Copy AI Fix: O contexto sempre-carregado afirma que os hooks estão inertes, e eles não estão">Copy AI Fix</button>
+        <button type="button" class="action-button ghost" data-view-finding-dialog="finding-dialog-5" aria-label="View details: O contexto sempre-carregado afirma que os hooks estão inertes, e eles não estão">View details</button>
+      </div>
+      <dialog class="finding-dialog" id="finding-dialog-5" data-finding-dialog-id="claude-md-afirma-hooks-inertes" aria-labelledby="finding-dialog-5-title">
+        <div class="dialog-heading">
+          <div><span class="label">Finding details</span><h3 id="finding-dialog-5-title">O contexto sempre-carregado afirma que os hooks estão inertes, e eles não estão</h3></div>
+          <span class="pill warning">Medium</span>
+        </div>
+        <div class="dialog-section"><span class="label">Cause</span><p>CLAUDE.md declara que os hooks são &#39;inertes enquanto não houver código&#39;. A evidência contradiz: os hooks só abortam se `command -v code-review-graph` falhar, o binário resolve no PATH e o diretório é repositório git. Portanto `code-review-graph update` executa a cada Edit e Write — inclusive nos arquivos .md que são hoje o único conteúdo do repositório — com timeout de 30s, e `status` executa a cada início de sessão. Uma afirmação falsa em contexto sempre-carregado desorienta toda decisão futura sobre custo e efeito desses hooks.</p></div>
+        <div class="dialog-section"><span class="label">Expected Output</span><ol><li>O contexto permanente para de afirmar algo falso sobre o comportamento automatizado do repositório.</li></ol></div>
+        
+        <div class="dialog-actions">
+          <button type="button" class="action-button secondary" data-copy-finding="claude-md-afirma-hooks-inertes" aria-label="Copy AI Fix: O contexto sempre-carregado afirma que os hooks estão inertes, e eles não estão">Copy AI Fix</button>
+          <button type="button" class="action-button ghost" data-close-finding-dialog="finding-dialog-5">Close</button>
+        </div>
+      </dialog>
+    </article>
+<article class="finding-card" data-finding-id="mcp-nao-portavel">
+      <div class="finding-card-main">
+        <div class="finding-meta">
+          <span class="pill warning">Medium</span>
+          <span class="pill neutral">Controlled Execution</span>
+        </div>
+        <h3>A configuração MCP contradiz a portabilidade que AGENTS.md declara</h3>
+        <p class="finding-preview">O .mcp.json versionado fixa um caminho absoluto de máquina como diretório de trabalho, o que aponta o servidor para um diretório inexistente em qualquer clone em outro caminho. Somado ao runner de pacote sem versão fixada, o mesmo arquivo carrega um problema de portabilidade e um de reprodutibilidade — enquanto AGENTS.md é declarado canônico e portável, e o projeto se prepara explicitamente para ser trabalhado por outros agentes.</p>
+      </div>
+      <div class="finding-actions">
+        <button type="button" class="action-button secondary" data-copy-finding="mcp-nao-portavel" aria-label="Copy AI Fix: A configuração MCP contradiz a portabilidade que AGENTS.md declara">Copy AI Fix</button>
+        <button type="button" class="action-button ghost" data-view-finding-dialog="finding-dialog-6" aria-label="View details: A configuração MCP contradiz a portabilidade que AGENTS.md declara">View details</button>
+      </div>
+      <dialog class="finding-dialog" id="finding-dialog-6" data-finding-dialog-id="mcp-nao-portavel" aria-labelledby="finding-dialog-6-title">
+        <div class="dialog-heading">
+          <div><span class="label">Finding details</span><h3 id="finding-dialog-6-title">A configuração MCP contradiz a portabilidade que AGENTS.md declara</h3></div>
+          <span class="pill warning">Medium</span>
+        </div>
+        <div class="dialog-section"><span class="label">Cause</span><p>O .mcp.json versionado fixa um caminho absoluto de máquina como diretório de trabalho, o que aponta o servidor para um diretório inexistente em qualquer clone em outro caminho. Somado ao runner de pacote sem versão fixada, o mesmo arquivo carrega um problema de portabilidade e um de reprodutibilidade — enquanto AGENTS.md é declarado canônico e portável, e o projeto se prepara explicitamente para ser trabalhado por outros agentes.</p></div>
+        <div class="dialog-section"><span class="label">Expected Output</span><ol><li>Outro agente ou outra máquina consegue usar o projeto sem corrigir configuração à mão.</li></ol></div>
+        
+        <div class="dialog-actions">
+          <button type="button" class="action-button secondary" data-copy-finding="mcp-nao-portavel" aria-label="Copy AI Fix: A configuração MCP contradiz a portabilidade que AGENTS.md declara">Copy AI Fix</button>
+          <button type="button" class="action-button ghost" data-close-finding-dialog="finding-dialog-6">Close</button>
+        </div>
+      </dialog>
+    </article>
+<article class="finding-card" data-finding-id="openspec-duplicado-em-duas-superficies">
+      <div class="finding-card-main">
+        <div class="finding-meta">
+          <span class="pill neutral">Low</span>
+          <span class="pill neutral">Learning Capture</span>
+        </div>
+        <h3>O procedimento OpenSpec existe duplicado em duas superfícies de asset</h3>
+        <p class="finding-preview">As cinco skills openspec-* e os cinco comandos opsx/* cobrem o mesmo procedimento par a par, somando cerca de mil linhas de procedimento, todas com advisory de ausência de disclosure progressiva e com o conteúdo integral inline. O ambiente ainda lista skills de escopo externo com as mesmas descrições, o que sugere uma terceira cópia. Qual rota é canônica é indeterminado, e o custo de descrição carregada é permanente.</p>
+      </div>
+      <div class="finding-actions">
+        <button type="button" class="action-button secondary" data-copy-finding="openspec-duplicado-em-duas-superficies" aria-label="Copy AI Fix: O procedimento OpenSpec existe duplicado em duas superfícies de asset">Copy AI Fix</button>
+        <button type="button" class="action-button ghost" data-view-finding-dialog="finding-dialog-7" aria-label="View details: O procedimento OpenSpec existe duplicado em duas superfícies de asset">View details</button>
+      </div>
+      <dialog class="finding-dialog" id="finding-dialog-7" data-finding-dialog-id="openspec-duplicado-em-duas-superficies" aria-labelledby="finding-dialog-7-title">
+        <div class="dialog-heading">
+          <div><span class="label">Finding details</span><h3 id="finding-dialog-7-title">O procedimento OpenSpec existe duplicado em duas superfícies de asset</h3></div>
+          <span class="pill neutral">Low</span>
+        </div>
+        <div class="dialog-section"><span class="label">Cause</span><p>As cinco skills openspec-* e os cinco comandos opsx/* cobrem o mesmo procedimento par a par, somando cerca de mil linhas de procedimento, todas com advisory de ausência de disclosure progressiva e com o conteúdo integral inline. O ambiente ainda lista skills de escopo externo com as mesmas descrições, o que sugere uma terceira cópia. Qual rota é canônica é indeterminado, e o custo de descrição carregada é permanente.</p></div>
+        <div class="dialog-section"><span class="label">Expected Output</span><ol><li>Uma rota por operação, sem cópia concorrente disputando seleção.</li></ol></div>
+        
+        <div class="dialog-actions">
+          <button type="button" class="action-button secondary" data-copy-finding="openspec-duplicado-em-duas-superficies" aria-label="Copy AI Fix: O procedimento OpenSpec existe duplicado em duas superfícies de asset">Copy AI Fix</button>
+          <button type="button" class="action-button ghost" data-close-finding-dialog="finding-dialog-7">Close</button>
+        </div>
+      </dialog>
+    </article>
+<article class="finding-card" data-finding-id="skills-de-grafo-sem-alvo">
+      <div class="finding-card-main">
+        <div class="finding-meta">
+          <span class="pill neutral">Low</span>
+          <span class="pill neutral">Learning Capture</span>
+        </div>
+        <h3>Quatro skills pressupõem um código que o próprio AGENTS.md declara inexistente</h3>
+        <p class="finding-preview">As skills de exploração, depuração, refatoração e revisão via grafo instruem consultar estatísticas e visão de arquitetura de um grafo de código. AGENTS.md afirma que o projeto está em fase de especificação e não tem código. CLAUDE.md reconhece a ressalva em prosa, mas nenhuma skill traz o gate na própria descrição, que é o que governa o roteamento — então elas podem ser selecionadas mesmo assim, e suas descrições custam contexto permanentemente sem alvo possível hoje.</p>
+      </div>
+      <div class="finding-actions">
+        <button type="button" class="action-button secondary" data-copy-finding="skills-de-grafo-sem-alvo" aria-label="Copy AI Fix: Quatro skills pressupõem um código que o próprio AGENTS.md declara inexistente">Copy AI Fix</button>
+        <button type="button" class="action-button ghost" data-view-finding-dialog="finding-dialog-8" aria-label="View details: Quatro skills pressupõem um código que o próprio AGENTS.md declara inexistente">View details</button>
+      </div>
+      <dialog class="finding-dialog" id="finding-dialog-8" data-finding-dialog-id="skills-de-grafo-sem-alvo" aria-labelledby="finding-dialog-8-title">
+        <div class="dialog-heading">
+          <div><span class="label">Finding details</span><h3 id="finding-dialog-8-title">Quatro skills pressupõem um código que o próprio AGENTS.md declara inexistente</h3></div>
+          <span class="pill neutral">Low</span>
+        </div>
+        <div class="dialog-section"><span class="label">Cause</span><p>As skills de exploração, depuração, refatoração e revisão via grafo instruem consultar estatísticas e visão de arquitetura de um grafo de código. AGENTS.md afirma que o projeto está em fase de especificação e não tem código. CLAUDE.md reconhece a ressalva em prosa, mas nenhuma skill traz o gate na própria descrição, que é o que governa o roteamento — então elas podem ser selecionadas mesmo assim, e suas descrições custam contexto permanentemente sem alvo possível hoje.</p></div>
+        <div class="dialog-section"><span class="label">Expected Output</span><ol><li>O roteamento para de oferecer capacidade que não tem alvo, e o custo de contexto some enquanto ela for inútil.</li></ol></div>
+        
+        <div class="dialog-actions">
+          <button type="button" class="action-button secondary" data-copy-finding="skills-de-grafo-sem-alvo" aria-label="Copy AI Fix: Quatro skills pressupõem um código que o próprio AGENTS.md declara inexistente">Copy AI Fix</button>
+          <button type="button" class="action-button ghost" data-close-finding-dialog="finding-dialog-8">Close</button>
+        </div>
+      </dialog>
+    </article>
+<article class="finding-card" data-finding-id="rotas-do-mapa-que-nao-resolvem">
+      <div class="finding-card-main">
+        <div class="finding-meta">
+          <span class="pill neutral">Low</span>
+          <span class="pill neutral">Task Understanding</span>
+        </div>
+        <h3>Duas rotas do mapa de contexto não resolvem para o destino esperado</h3>
+        <p class="finding-preview">AGENTS.md roteia &#39;Comportamento aprovado&#39; para openspec/specs/, diretório que ainda não existe — comportamento esperado antes do primeiro arquivamento, mas a rota não avisa isso a quem chega. E a autoridade de resolução de conflito entre ferramentas é citada, em AGENTS.md e no protocolo de revisão, por um nome de arquivo com vírgula no lugar do ponto. O arquivo existe literalmente assim, então nenhuma verificação estrutural acusa; mas é o documento invocado justamente no momento de conflito, quando há menos margem para adivinhar.</p>
+      </div>
+      <div class="finding-actions">
+        <button type="button" class="action-button secondary" data-copy-finding="rotas-do-mapa-que-nao-resolvem" aria-label="Copy AI Fix: Duas rotas do mapa de contexto não resolvem para o destino esperado">Copy AI Fix</button>
+        <button type="button" class="action-button ghost" data-view-finding-dialog="finding-dialog-9" aria-label="View details: Duas rotas do mapa de contexto não resolvem para o destino esperado">View details</button>
+      </div>
+      <dialog class="finding-dialog" id="finding-dialog-9" data-finding-dialog-id="rotas-do-mapa-que-nao-resolvem" aria-labelledby="finding-dialog-9-title">
+        <div class="dialog-heading">
+          <div><span class="label">Finding details</span><h3 id="finding-dialog-9-title">Duas rotas do mapa de contexto não resolvem para o destino esperado</h3></div>
+          <span class="pill neutral">Low</span>
+        </div>
+        <div class="dialog-section"><span class="label">Cause</span><p>AGENTS.md roteia &#39;Comportamento aprovado&#39; para openspec/specs/, diretório que ainda não existe — comportamento esperado antes do primeiro arquivamento, mas a rota não avisa isso a quem chega. E a autoridade de resolução de conflito entre ferramentas é citada, em AGENTS.md e no protocolo de revisão, por um nome de arquivo com vírgula no lugar do ponto. O arquivo existe literalmente assim, então nenhuma verificação estrutural acusa; mas é o documento invocado justamente no momento de conflito, quando há menos margem para adivinhar.</p></div>
+        <div class="dialog-section"><span class="label">Expected Output</span><ol><li>O mapa de contexto, que é hoje o principal ativo do projeto, para de ter rota que morre em silêncio.</li></ol></div>
+        
+        <div class="dialog-actions">
+          <button type="button" class="action-button secondary" data-copy-finding="rotas-do-mapa-que-nao-resolvem" aria-label="Copy AI Fix: Duas rotas do mapa de contexto não resolvem para o destino esperado">Copy AI Fix</button>
+          <button type="button" class="action-button ghost" data-close-finding-dialog="finding-dialog-9">Close</button>
+        </div>
+      </dialog>
+    </article></div>
+  </section>
+  <section class="section" data-section="customize" aria-labelledby="section-customize">
+    <div class="section-heading">
+      <div><span class="eyebrow">04 · Capability</span><h2 id="section-customize">Agent Customize</h2></div>
+      <p>Inspected project and authorized host surfaces.</p>
+    </div>
+    <div class="custom-grid"><article><span class="custom-mark">R</span><div><h3>Rules</h3><p>Project · 2</p></div></article><article><span class="custom-mark">S</span><div><h3>Skills</h3><p>Project · 9</p></div></article><article><span class="custom-mark">C</span><div><h3>Commands</h3><p>Project · 5</p></div></article><article><span class="custom-mark">H</span><div><h3>Hooks</h3><p>Project · 2</p></div></article><article><span class="custom-mark">M</span><div><h3>MCP</h3><p>Project · 1</p></div></article></div>
+  </section>
+  <section class="section" data-section="methodology" aria-labelledby="section-methodology">
+    <div class="section-heading">
+      <div><span class="eyebrow">05 · Boundary</span><h2 id="section-methodology">Evidence and methodology</h2></div>
+      <p>Reader-safe evidence only.</p>
+    </div>
+    <div class="evidence-grid"><div><span>Evidence mode</span><strong>—</strong></div><div><span>Task episodes</span><strong>0</strong></div><div><span>Edited episodes</span><strong>0</strong></div><div><span>Sampling</span><strong>0 / 0</strong></div><div><span>Confidence</span><strong>—</strong></div><div><span>Learning state</span><strong>—</strong></div></div>
+    
+    <p class="method-note">Activity totals describe volume, not quality or savings. Fluency conclusions come from the reviewed task sample and remain bounded by the retained evidence.</p>
+  </section>
+<footer>Generated from one reviewed Harness source · self-contained Codex HTML</footer>
+</main>
+<dialog id="manual-copy-dialog" class="manual-copy-dialog" aria-labelledby="manual-copy-title" aria-describedby="manual-copy-description">
+  <div class="dialog-heading">
+    <div>
+      <span class="label">Manual fallback</span>
+      <h3 id="manual-copy-title">Copy the AI Fix prompt</h3>
+    </div>
+  </div>
+  <p id="manual-copy-description">Automatic copy was blocked. The exact prompt is selected below.</p>
+  <textarea id="manual-copy-text" readonly aria-label="AI Fix prompt"></textarea>
+  <div class="dialog-actions">
+    <button type="button" class="action-button ghost" data-close-finding-dialog="manual-copy-dialog">Close</button>
+  </div>
+</dialog>
+<script id="harness-report-data" type="application/json">{"findings":[{"id":"adapters-sem-criterio-de-pronto","aiFixPrompt":"/better-harness fix this issue\n\nDê a cada task de adapter em openspec/changes/client-cost-attribution/tasks.md §6 um critério de pronto verificável: uma amostra real capturada da fonte daquele provider, guardada como fixture, e um teste que falhe se o adapter não conseguir extrair dela os campos que declara fornecer. Distinga explicitamente 'fonte tentada e não funciona' de 'fonte não tentada'.\n\n## Validação\n\n- Cada task de §6 nomeia a fixture que a comprova\n- Existe teste que falha quando o adapter declara um campo que não consegue extrair da amostra"},{"id":"ambiente-indefinido-antes-da-fundacao","aiFixPrompt":"/better-harness fix this issue\n\nDeclare o ambiente mínimo do projeto antes de a task 1.1 ser executada: versão de toolchain fixada, comando de build, comando de teste, comando de lint, localização do arquivo SQLite e rotina de reset. Registre a CLI OpenSpec como requisito de ambiente. Faça os protocolos de implementação e revisão citarem os comandos reais em vez de descrevê-los.\n\n## Validação\n\n- Um operador em máquina limpa consegue chegar de clone a teste rodando seguindo apenas o que está escrito\n- Os comandos citados nos protocolos existem e executam"},{"id":"regras-sem-portao-mecanico","aiFixPrompt":"/better-harness fix this issue\n\nEscolha as duas ou três invariantes de maior consequência (SQL fora de storage/, equivalente somado ao pago, ausente virando zero) e as torne executáveis como verificação automatizada que roda sem depender de o agente lembrar. Reintroduza um portão de CI mínimo que rode essa verificação mais `openspec validate --strict`.\n\n## Validação\n\n- Uma violação deliberada de cada invariante escolhida faz a verificação falhar\n- O portão roda sem intervenção manual"},{"id":"revisor-independente-sem-mecanismo","aiFixPrompt":"/better-harness fix this issue\n\nDê aos gatilhos RED um mecanismo em vez de uma promessa. No mínimo: exigir que mudanças que toquem caminho do dinheiro passem por branch separada com verificação obrigatória antes do merge em main. Se operador único torna PR formal desproporcional, defina explicitamente qual evidência substitui a aprovação independente e onde ela fica registrada.\n\n## Validação\n\n- Uma mudança que toca cálculo de custo não consegue chegar a main sem passar pelo gatilho definido\n- A evidência de aceitação é recuperável fora do checkbox do implementador"},{"id":"claude-md-afirma-hooks-inertes","aiFixPrompt":"/better-harness fix this issue\n\nCorrija a afirmação em CLAUDE.md sobre os hooks: descreva o que eles realmente fazem (executam a cada Edit/Write e a cada SessionStart, guardados apenas por presença do binário e por ser repo git). Decida e registre se essa execução é desejada enquanto não houver código, ou se os hooks devem ser desativados até a primeira task de código.\n\n## Validação\n\n- A descrição em CLAUDE.md corresponde ao comportamento real dos hooks em .claude/settings.json\n- Existe decisão registrada sobre mantê-los ativos ou não nesta fase"},{"id":"mcp-nao-portavel","aiFixPrompt":"/better-harness fix this issue\n\nTorne .mcp.json portável: remova o caminho absoluto de máquina ou substitua-o por referência relativa à raiz do repositório, e fixe a versão do pacote do runner. Se o arquivo for intencionalmente específico da máquina, mova-o para fora do controle de versão e documente como regenerá-lo.\n\n## Validação\n\n- Um clone em outro caminho consegue iniciar o servidor MCP sem editar o arquivo\n- A versão do runner está fixada"},{"id":"openspec-duplicado-em-duas-superficies","aiFixPrompt":"/better-harness fix this issue\n\nDetermine qual superfície é canônica para o procedimento OpenSpec neste projeto — skills ou comandos — e remova a duplicata do repositório. Verifique se as skills de escopo externo sombreiam as do projeto e resolva o conflito de roteamento.\n\n## Validação\n\n- Existe uma única rota de projeto por operação OpenSpec\n- Nenhuma descrição duplicada compete no roteamento"},{"id":"skills-de-grafo-sem-alvo","aiFixPrompt":"/better-harness fix this issue\n\nOu remova as quatro skills de grafo até existir código, ou coloque na própria descrição de cada uma a condição que impede sua seleção enquanto o grafo estiver vazio. A ressalva em prosa no CLAUDE.md não governa roteamento.\n\n## Validação\n\n- Nenhuma skill de grafo pode ser selecionada enquanto não houver código indexado\n- Se removidas, existe registro de como regenerá-las"},{"id":"rotas-do-mapa-que-nao-resolvem","aiFixPrompt":"/better-harness fix this issue\n\nRenomeie Prompts/ToolingAndContextPolicy,md para usar extensão .md e atualize as citações em AGENTS.md e docs/harness/protocolo-revisao.md. Na tabela de roteamento, indique que openspec/specs/ passa a existir após o primeiro arquivamento de change.\n\n## Validação\n\n- Toda rota da tabela de AGENTS.md resolve, ou declara quando passará a resolver\n- Nenhuma citação aponta para nome de arquivo malformado"}]}</script>
+<script id="harness-report-actions" type="application/json">{"reportRoute":null,"findings":[]}</script>
+<script id="harness-report-interactions">(function installHtmlReportInteractions({
+  document,
+  navigator,
+  location,
+  labels,
+  schedule = (callback, delay) => globalThis.setTimeout(callback, delay),
+}) {
+  document.documentElement.classList.remove("no-js");
+
+  function readJson(id) {
+    const element = document.getElementById(id);
+    if (!element) return { ok: false, value: null };
+    try {
+      return { ok: true, value: JSON.parse(element.textContent || "{}") };
+    } catch {
+      return { ok: false, value: null };
+    }
+  }
+
+  function hasOnlyKeys(value, keys) {
+    return value && typeof value === "object" && !Array.isArray(value)
+      && Object.keys(value).every((key) => keys.includes(key));
+  }
+
+  function safeReportRoute(value) {
+    if (typeof value !== "string" || value.length === 0 || value.includes("\\")) return false;
+    if (value.startsWith("/") || /^[A-Za-z]:/u.test(value)) return false;
+    const segments = value.split("/");
+    return segments.at(-1) === "report.html"
+      && segments.every((segment) => segment && segment !== "." && segment !== "..");
+  }
+
+  const reportDataState = readJson("harness-report-data");
+  const reportActionsState = readJson("harness-report-actions");
+  const prompts = new Map();
+  const actions = new Map();
+  let bindingMode = "invalid";
+  let reportRoute = null;
+
+  if (reportDataState.ok
+    && hasOnlyKeys(reportDataState.value, ["findings"])
+    && Array.isArray(reportDataState.value.findings)) {
+    let validPrompts = true;
+    for (const finding of reportDataState.value.findings) {
+      const id = String(finding?.id ?? "");
+      if (!hasOnlyKeys(finding, ["id", "aiFixPrompt"])
+        || !id
+        || typeof finding.aiFixPrompt !== "string"
+        || finding.aiFixPrompt.trim().length === 0
+        || prompts.has(id)) {
+        validPrompts = false;
+        break;
+      }
+      prompts.set(id, finding.aiFixPrompt);
+    }
+
+    const payload = reportActionsState.value;
+    if (validPrompts
+      && reportActionsState.ok
+      && hasOnlyKeys(payload, ["reportRoute", "findings"])
+      && Array.isArray(payload.findings)) {
+      let validActions = true;
+      for (const finding of payload.findings) {
+        const id = String(finding?.id ?? "");
+        if (!hasOnlyKeys(finding, ["id", "expectedRevision"])
+          || !id
+          || !Number.isInteger(finding.expectedRevision)
+          || finding.expectedRevision < 0
+          || actions.has(id)) {
+          validActions = false;
+          break;
+        }
+        actions.set(id, finding);
+      }
+      const sameIds = actions.size === prompts.size
+        && [...prompts.keys()].every((id) => actions.has(id));
+      if (validActions && payload.reportRoute === null && actions.size === 0) {
+        bindingMode = "empty";
+      } else if (validActions && safeReportRoute(payload.reportRoute) && sameIds) {
+        bindingMode = "bound";
+        reportRoute = payload.reportRoute;
+      }
+    }
+  }
+
+  function resolveBindingPaths() {
+    try {
+      const url = new URL(String(location?.href ?? ""));
+      if (url.protocol !== "file:") return null;
+      const pathname = decodeURIComponent(url.pathname);
+      const windowsDrive = /^\/[A-Za-z]:\//u.test(pathname);
+      const windowsUnc = Boolean(url.hostname);
+      const suffix = `/${reportRoute}`;
+      const comparablePath = windowsDrive || windowsUnc ? pathname.toLowerCase() : pathname;
+      const comparableSuffix = windowsDrive || windowsUnc ? suffix.toLowerCase() : suffix;
+      if (!comparablePath.endsWith(comparableSuffix)) return null;
+
+      const workspaceUrlPath = pathname.slice(0, pathname.length - suffix.length);
+      const reportDirectory = pathname.slice(0, pathname.lastIndexOf("/"));
+      const findingsUrlPath = `${reportDirectory}/findings.json`;
+      const toNativePath = (value) => {
+        if (windowsDrive) return value.slice(1).replace(/\//gu, "\\");
+        if (windowsUnc) {
+          const host = decodeURIComponent(url.hostname);
+          return `\\\\${host}${value.replace(/\//gu, "\\")}`;
+        }
+        return value || "/";
+      };
+      return {
+        workspacePath: toNativePath(workspaceUrlPath),
+        findingsPath: toNativePath(findingsUrlPath),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  function promptForFinding(findingId) {
+    if (bindingMode === "invalid") return null;
+    const id = String(findingId);
+    const prompt = prompts.get(id);
+    if (typeof prompt !== "string" || prompt.trim().length === 0) return null;
+    if (bindingMode === "empty") return prompt;
+    const paths = resolveBindingPaths();
+    if (!paths) return prompt;
+    const action = actions.get(id);
+    if (!action) return null;
+    const callback = {
+      contract: "better-harness-fix-output/v1",
+      workspacePath: paths.workspacePath,
+      findingsPath: paths.findingsPath,
+      findingId: id,
+      expectedRevision: action.expectedRevision,
+    };
+    return `${prompt}\n\n<better-harness-fix-output>\n${JSON.stringify(callback)}\n</better-harness-fix-output>`;
+  }
+
+  const status = document.getElementById("copy-status");
+  const manualDialog = document.getElementById("manual-copy-dialog");
+  const manualText = document.getElementById("manual-copy-text");
+  const dialogTriggers = new Map();
+
+  function report(message, state) {
+    if (!status) return;
+    status.textContent = message;
+    status.dataset.state = state;
+  }
+
+  function legacyCopy(prompt) {
+    const textarea = document.createElement("textarea");
+    textarea.value = prompt;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.append(textarea);
+    try {
+      textarea.select();
+      return document.execCommand("copy") === true;
+    } catch {
+      return false;
+    } finally {
+      textarea.remove();
+    }
+  }
+
+  function copied(trigger) {
+    report(labels.copySuccess, "success");
+    if (trigger) {
+      const originalLabel = trigger.textContent;
+      trigger.textContent = labels.copied;
+      schedule(() => {
+        trigger.textContent = originalLabel || labels.copy;
+      }, 1800);
+    }
+    return true;
+  }
+
+  async function copyFinding(findingId, trigger) {
+    const prompt = promptForFinding(findingId);
+    if (typeof prompt !== "string" || prompt.length === 0) {
+      report(labels.missingPrompt, "error");
+      return false;
+    }
+
+    try {
+      if (!navigator?.clipboard?.writeText) throw new Error("Clipboard API unavailable");
+      await navigator.clipboard.writeText(prompt);
+      return copied(trigger);
+    } catch {
+      if (legacyCopy(prompt)) return copied(trigger);
+    }
+
+    if (manualDialog && typeof manualDialog.showModal === "function") {
+      dialogTriggers.set(manualDialog.id, trigger);
+      if (!manualDialog.open) manualDialog.showModal();
+    }
+    if (manualText) {
+      manualText.value = prompt;
+      manualText.focus();
+      manualText.select();
+    }
+    report(labels.manualCopy, "error");
+    return false;
+  }
+
+  function openDialog(dialogId, trigger) {
+    const dialog = document.getElementById(dialogId);
+    if (!dialog || typeof dialog.showModal !== "function") return false;
+    dialogTriggers.set(dialogId, trigger);
+    dialog.showModal();
+    return true;
+  }
+
+  function closeDialog(dialogId) {
+    const dialog = document.getElementById(dialogId);
+    if (!dialog || !dialog.open || typeof dialog.close !== "function") return false;
+    dialog.close();
+    return true;
+  }
+
+  for (const trigger of document.querySelectorAll("[data-copy-finding]")) {
+    trigger.addEventListener("click", () => copyFinding(trigger.dataset.copyFinding, trigger));
+  }
+  for (const trigger of document.querySelectorAll("[data-view-finding-dialog]")) {
+    trigger.addEventListener("click", () => openDialog(trigger.dataset.viewFindingDialog, trigger));
+  }
+  for (const trigger of document.querySelectorAll("[data-close-finding-dialog]")) {
+    trigger.addEventListener("click", () => closeDialog(trigger.dataset.closeFindingDialog));
+  }
+  const interactiveDialogs = [
+    ...document.querySelectorAll("dialog[data-finding-dialog-id]"),
+    manualDialog,
+  ].filter(Boolean);
+  for (const dialog of interactiveDialogs) {
+    dialog.addEventListener("close", () => {
+      const trigger = dialogTriggers.get(dialog.id);
+      dialogTriggers.delete(dialog.id);
+      trigger?.focus();
+    });
+    dialog.addEventListener("click", (event) => {
+      if (event.target !== dialog) return;
+      const rect = dialog.getBoundingClientRect();
+      const outside = event.clientX < rect.left
+        || event.clientX > rect.right
+        || event.clientY < rect.top
+        || event.clientY > rect.bottom;
+      if (outside) closeDialog(dialog.id);
+    });
+  }
+
+  return { copyFinding, openDialog, closeDialog };
+})({document,navigator,location:globalThis.location,labels:{"copy":"Copy AI Fix","copied":"Copied","copySuccess":"Copied. Paste into the Codex input.","manualCopy":"Automatic copy was blocked. Copy the selected prompt manually.","missingPrompt":"No AI Fix prompt is available for this finding."}});</script>
+</body>
+</html>

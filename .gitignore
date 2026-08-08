@@ -3,3 +3,6 @@
 
 # macOS
 .DS_Store
+
+# Artefatos de execucao da auditoria
+.claude/better-harness/
