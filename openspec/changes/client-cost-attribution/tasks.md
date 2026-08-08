@@ -55,11 +55,15 @@ Depende de 2 e 4.
 
 Depende de 5. Cada adapter é um incremento independente e verificável isoladamente.
 
-**Critério de pronto, válido para 6.2 a 6.6.** Um adapter só pode ser marcado
+**Critério de pronto, válido para 6.2 a 6.10.** Um adapter só pode ser marcado
 concluído quando existir uma amostra real capturada da fonte daquele provider,
 guardada como fixture no repositório, e um teste que falhe se o adapter não
 extrair dela exatamente os campos que declara fornecer. Declarar tier não é
 concluir a task — sem fixture, o adapter fica em `não tentado`.
+
+Escopo de providers revisado em 2026-08-08 (design.md) — substitui os cinco
+nomes originais do blueprint pelo que existe e responde de fato nesta
+máquina.
 
 - [x] 6.1 Definir o formato de fixture de amostra e o teste genérico que confronta os campos declarados por um adapter contra o que ele realmente extrai da amostra (padrão: parsing puro separado de I/O, testável sem tocar disco — `src/adapters/claude.rs::parse_linha`)
 - [x] 6.2 Adapter Claude — capturar amostra real, declarar tier e campos, provar extração contra a fixture (tier `session_files`, risco de R-4 aceito conscientemente — ver design.md)
@@ -67,6 +71,8 @@ concluir a task — sem fixture, o adapter fica em `não tentado`.
 - [ ] 6.4 Adapter Gemini — `sem fonte utilizável`: CLI real (`agy`/Antigravity) com autenticação funcional, headless JSON confirmado com chamada real — diferente do ZCode, aqui a CLI existe. O que falta é histórico consultável: investigados `history.jsonl` (prompt digitado, não uso), SQLite de conversas (colunas blob protobuf sem schema, busca do token count real como varint não encontrou nada) e `transcript.jsonl` (conteúdo de conversa, fora de escopo). Sem o `.proto` oficial, decodificar os blobs não é viável nesta investigação
 - [x] 6.5 Adapter Grok — capturar amostra real, declarar tier e campos, provar extração contra a fixture (tier `session_files`; formato mais favorável que o Claude: usage/custo em eventos `turn_completed` totalmente separados de conteúdo de mensagem — filtrar por tipo de evento já evita ler conteúdo, estruturalmente)
 - [ ] 6.6 Adapter ZCode — `sem fonte utilizável`: app nativo inspecionado, sem log de uso estável/documentado para importação retroativa; permanece explicitamente fora de conclusão, não como ausência silenciosa
+- [ ] 6.9 Adapter GitHub Copilot CLI (`provider_id: github-copilot`) — investigar fonte de histórico local, capturar amostra real, declarar tier e campos, provar extração contra a fixture
+- [ ] 6.10 Adapter Qwen (`provider_id: qwen-deepseek` / `qwen-zai` / `qwen-kimi`) — uma CLI, três backends por `--model`; investigar fonte de histórico local (compartilhada ou por backend), capturar amostra real por backend testável (`kimi` fica `não tentado`: configurado, bloqueado por saldo do provider — não é falha de investigação)
 - [x] 6.7 Distinguir três estados por provider na cobertura declarada: `verificado` (fixture existe e o teste passa), `sem fonte utilizável` (fonte inspecionada e comprovadamente insuficiente, com o motivo registrado) e `não tentado`. Um provider nunca pode aparecer como ausência silenciosa de consumo (`src/adapters/mod.rs::StatusCobertura`, `cobertura_v0_0()`)
 - [x] 6.8 Remover das amostras qualquer conteúdo de prompt, credencial ou dado de cliente antes de versioná-las — a fixture prova formato, não guarda trabalho real (IDs fictícios, testado que `content` nunca aparece no registro extraído)
 

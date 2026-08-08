@@ -11,17 +11,28 @@ session files → PTY (**D-4**), custo do provider prevalece sobre catálogo (**
 Restrição que molda tudo: **não há daemon, orquestração nem UI na v0.0**. O modo é
 observe — o Brian lê o que os providers já produziram, sem dirigir nenhum agente.
 
-Escopo confirmado para esta change: quatro providers canônicos do recorte v0.0
-(Claude, Codex, Grok e ZCode). Isso é o que torna a change não-trivial — cada
-um expõe consumo de um jeito diferente, e vários não expõem custo em dólar.
+**[Δ] Escopo de providers revisado pelo autor em 2026-08-08**, substituindo os
+cinco nomes originais do blueprint (Claude, Codex, Gemini, Grok, ZCode) pelo
+que existe e responde de fato nesta máquina. Testado com chamada mínima real
+(`"Reply only OK"`, `--output-format json`) em cada CLI:
 
-**[Δ] Matriz operacional observada em 2026-08-08 nesta máquina:** `claude`,
-`codex`, `grok`, `agy`, `copilot`, `qwen/deepseek` e `qwen/z.ai` responderam
-com sucesso em chamadas mínimas; `qwen/kimi` ficou bloqueado por saldo; `zcode`
-permaneceu sem fonte utilizável para importação retroativa. Esta descoberta não
-altera automaticamente o escopo da change: AGY, Copilot CLI e Qwen entram aqui
-como evidência de fontes promissoras para futuros adapters, não como tasks já
-concluídas deste grupo.
+| Provider (`provider_id`) | CLI | Estado |
+|---|---|---|
+| `claude` | `claude` | verificado |
+| `codex` | `codex exec` | verificado |
+| `grok` | `grok` | verificado |
+| `gemini` | `agy` (Antigravity) | sem fonte utilizável — CLI funciona, dado local sem schema |
+| `github-copilot` | `copilot` | a verificar |
+| `qwen-deepseek` | `qwen --model deepseek-v4-pro` | a verificar |
+| `qwen-zai` | `qwen --model glm-5.2` | a verificar |
+| `qwen-kimi` | `qwen --model kimi-k3` | configurado, bloqueado por saldo do provider |
+| `zcode` | nenhum | sem fonte utilizável — sem CLI |
+
+`qwen` é uma única CLI que roteia para backends diferentes via `--model`. A
+distinção de `provider_id` (`qwen-deepseek`/`qwen-zai`/`qwen-kimi`) segue o
+mesmo raciocínio do Grok — um `provider_id` por fonte de billing/conta
+distinta, não por CLI — mas os três compartilham o mesmo mecanismo de coleta
+local, então o adapter é um só módulo com um `provider_id` por backend.
 
 ## Goals / Non-Goals
 
