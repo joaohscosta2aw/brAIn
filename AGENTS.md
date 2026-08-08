@@ -1,38 +1,81 @@
-<!-- code-review-graph MCP tools -->
-## MCP Tools: code-review-graph
+# BrIAn — Contexto do Projeto
 
-**IMPORTANT: This project has a knowledge graph. ALWAYS use the
-code-review-graph MCP tools BEFORE using Grep/Glob/Read to explore
-the codebase.** The graph is faster, cheaper (fewer tokens), and gives
-you structural context (callers, dependents, test coverage) that file
-scanning cannot.
+Plano de controle de engenharia de IA. **Não é um coding agent.**
+Governa capacidade paga, custo e continuidade de raciocínio entre múltiplos
+providers (Claude, Codex, Gemini, Grok, ZCode) e múltiplos clientes.
 
-### When to use graph tools FIRST
+## Estado atual
 
-- **Exploring code**: `semantic_search_nodes_tool` or `query_graph_tool` instead of Grep
-- **Understanding impact**: `get_impact_radius_tool` instead of manually tracing imports
-- **Code review**: `detect_changes_tool` + `get_review_context_tool` instead of reading entire files
-- **Finding relationships**: `query_graph_tool` with callers_of/callees_of/imports_of/tests_for
-- **Architecture questions**: `get_architecture_overview_tool` + `list_communities_tool`
+Fase de especificação. Nenhum código ainda — o repositório contém blueprint,
+premissas e decisões. Não implemente features do produto sem uma change
+OpenSpec aprovada.
 
-Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
+## Fonte da verdade (nesta ordem)
 
-### Key Tools
+1. `docs/PREMISSAS-BASICAS.md` — lei do repo (missão, princípios OP-1..8, fronteiras)
+2. `docs/DECISIONS.md` — decisões travadas D-1..D-17
+3. `BRIAN-BLUEPRINT-V1.md` — blueprint canônico (v1.0)
+4. `openspec/` — comportamento aprovado, quando existir
 
-| Tool | Use when |
-| ------ | ---------- |
-| `detect_changes_tool` | Reviewing code changes — gives risk-scored analysis |
-| `get_review_context_tool` | Need source snippets for review — token-efficient |
-| `get_impact_radius_tool` | Understanding blast radius of a change |
-| `get_affected_flows_tool` | Finding which execution paths are impacted |
-| `query_graph_tool` | Tracing callers, callees, imports, tests, dependencies |
-| `semantic_search_nodes_tool` | Finding functions/classes by name or keyword |
-| `get_architecture_overview_tool` | Understanding high-level codebase structure |
-| `refactor_tool` | Planning renames, finding dead code |
+`BRIAN-BLUEPRINT.md` é o v0.1-draft **histórico**. Serve para entender *por que*
+certas decisões foram tomadas. Não use para implementar.
 
-### Workflow
+## Duas leis do produto
 
-1. The graph auto-updates on file changes (via hooks).
-2. Use `detect_changes_tool` for code review.
-3. Use `get_affected_flows_tool` to understand impact.
-4. Use `query_graph_tool` pattern="tests_for" to check coverage.
+- **D-16 — Zero token perdido.** Ledger, janelas, %, burn e atribuição desde o minuto 0.
+- **D-17 — Continuidade multi-LLM.** Continuity Pack permite trocar de provider sem reexplicar o trabalho.
+
+Ambas sem reversão. Nada precede D-16.
+
+## Fronteira do produto (D-10)
+
+Brian atua onde há **N providers × M clientes × T tempo**.
+Se um provider único numa sessão única já resolve, não é problema do Brian.
+Brian não orquestra o inner loop de um provider.
+
+## Ordem de construção (obrigatória)
+
+`v0.0` capacidade/custo → `v0.1` continuidade → `v0.2` run/worktree →
+`v0.3` router/UI → `v0.4+` memória rica.
+
+Nunca workflow, UI ou learning antes de D-16 verde.
+
+## Invariantes
+
+- Custo reportado pelo provider tem precedência sobre catálogo de preço (D-6)
+- Fonte do dado sempre rotulada: `provider` | `brian_measured` | `estimated` | `unknown` — nunca misturadas sem rótulo
+- `unattributed` é alarme, nunca estado normal
+- Memória é append-only; correção cria registro que supersede (D-14)
+- Memória cross-client negada por construção, não por filtro
+- Secrets nunca em texto claro — nem em log, nem em UI, nem para agentes
+- SQL apenas em `storage/`, atrás de traits (D-9)
+- Estado do run persistido antes de qualquer efeito colateral externo (D-12)
+- Runtime chama-se "Brian Core". O termo "Brain" é proibido (D-11)
+
+## Onde encontrar
+
+| Assunto | Fonte |
+|---|---|
+| Missão, princípios, fronteiras | `docs/PREMISSAS-BASICAS.md` |
+| Decisões travadas | `docs/DECISIONS.md` |
+| Arquitetura, subsistemas, schema SQLite | `BRIAN-BLUEPRINT-V1.md` |
+| Glossário do domínio | `BRIAN-BLUEPRINT-V1.md` §96 |
+| Missão de especificação em curso | `Prompts/PrimeirosPassos.md` |
+| Política de ferramentas e autoridade | `Prompts/ToolingAndContextPolicy,md` |
+
+## Hipótese, não premissa
+
+**H-1 — Context Governor.** Reduzir custo ≥30% via contexto pré-montado.
+Isolada por construção: nada pode depender dela até o experimento confirmar.
+
+## Quando perguntar (RED)
+
+Confirme com humano antes de: alterar comportamento especificado, contratos
+públicos, segurança, perda de dados, nova dependência crítica, mudar requisito
+do blueprint, ou tocar D-16 / D-17 / D-10.
+
+## Ferramentas
+
+Grafo estrutural do repositório disponível via MCP `code-review-graph`
+(útil apenas quando houver código). Hierarquia de autoridade quando ferramentas
+divergem: `Prompts/ToolingAndContextPolicy,md`.
