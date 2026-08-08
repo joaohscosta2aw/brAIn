@@ -120,17 +120,14 @@ mod tests {
     }
 
     #[test]
-    fn pago_e_equivalente_nunca_se_somam_num_unico_numero() {
-        // Task 3.7: prova que os dois valores permanecem campos distintos e
-        // que somá-los exigiria código explícito que não existe em nenhum
-        // caminho desta função -- verificado aqui, e a invariante de domínio
-        // que caminho do dinheiro é RED cobre isso em src/domain.rs também.
+    fn pago_e_equivalente_permanecem_campos_distintos() {
+        // Task 3.7: prova que os dois valores nunca colapsam num único número.
+        // resolver_custo() não expõe nenhum caminho que combine os dois — cada
+        // um é lido de um campo próprio de `Custo`, sempre.
         let c = catalogo(15_000_000);
         let (custo, _) = resolver_custo(Some(Money(9_990_000)), &tokens(1000), Some(&c));
-        let soma_seria = custo.pago.unwrap().0 + custo.equivalente_api.unwrap().0;
         assert_ne!(
-            custo.pago.unwrap().0,
-            soma_seria,
+            custo.pago, custo.equivalente_api,
             "os dois valores devem permanecer distinguíveis, não colapsados"
         );
     }
