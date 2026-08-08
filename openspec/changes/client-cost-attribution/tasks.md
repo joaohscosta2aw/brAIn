@@ -9,7 +9,7 @@
 
 Depende de 1.
 
-- [ ] 2.1 Implementar gravação de `usage_record` com provider, modelo, tokens de entrada/cache/saída/reasoning, custo e `occurred_at` em UTC
+- [ ] 2.1 Implementar gravação de `usage_record` com provider, modelo, tokens de entrada/cache/saída/reasoning, `billing_mode`, os dois campos de custo e `occurred_at` em UTC
 - [ ] 2.2 Distinguir ausente, zero e desconhecido na representação de tokens e custo — verificável por teste que falha se ausente virar zero
 - [ ] 2.3 Tornar `usage_source` e `cost_source` obrigatórios: nenhum registro pode ser gravado sem ambos
 - [ ] 2.4 Rejeitar registro sem `occurred_at` determinável, sem gravar linha parcial
@@ -19,11 +19,14 @@ Depende de 1.
 
 Depende de 2.
 
-- [ ] 3.1 Implementar cálculo de custo a partir do catálogo de preço quando o provider não reporta custo
-- [ ] 3.2 Implementar a precedência D-6: custo do provider prevalece sobre catálogo
-- [ ] 3.3 Marcar `cost_source = unknown` quando não há custo do provider nem entrada de catálogo, sem registrar zero
-- [ ] 3.4 Implementar supersessão auditável de custo: quando o custo real chega depois, o valor e a fonte anteriores permanecem recuperáveis
-- [ ] 3.5 Garantir que agregações informem a composição por fonte e destaquem a parcela de custo desconhecido
+- [ ] 3.1 Implementar o catálogo de preço versionado por vigência, de modo que o equivalente de um consumo passado permaneça reproduzível após atualização de preços
+- [ ] 3.2 Calcular o custo equivalente em API a partir de tokens e catálogo, para qualquer `billing_mode`, inclusive assinatura
+- [ ] 3.3 Registrar o custo pago quando o provider o informa, mantendo-o em campo distinto do equivalente
+- [ ] 3.4 Implementar a precedência D-6 sobre o valor pago, sem apagar o equivalente
+- [ ] 3.5 Marcar `cost_source = unknown` apenas quando não há custo do provider nem entrada de catálogo, sem registrar zero em nenhum dos dois campos
+- [ ] 3.6 Implementar supersessão auditável: quando o custo pago chega depois, o valor e a fonte anteriores permanecem recuperáveis
+- [ ] 3.7 Garantir que nenhuma apresentação exiba o equivalente como valor pago — verificável por teste que falha se os dois forem somados num único número
+- [ ] 3.8 Garantir que agregações informem a composição por fonte e destaquem a parcela sem catálogo, que é receita não faturável
 
 ## 4. Atribuição
 
@@ -65,10 +68,11 @@ Depende de 3, 4, 5.
 
 - [ ] 7.1 `brian import` com recorte de período
 - [ ] 7.2 `brian attribute` para atribuição manual
-- [ ] 7.3 `brian costs` por cliente e por período, distinguindo cliente sem consumo de cliente inexistente
+- [ ] 7.3 `brian costs` por cliente e por período, apresentando custo pago e custo equivalente como grandezas distintas, e distinguindo cliente sem consumo de cliente inexistente
 - [ ] 7.4 `brian costs --by provider` com soma coerente com o total do mesmo período
-- [ ] 7.5 `brian costs --unattributed` listando cada registro órfão com provider, modelo, tokens, custo e instante
-- [ ] 7.6 `brian costs --export` em formato tabular incluindo `usage_source` e `cost_source` por registro, com custo desconhecido marcado como tal
+- [ ] 7.5 `brian costs --by model` expondo custo equivalente por token, permitindo comparar modelos de providers distintos numa base comum
+- [ ] 7.6 `brian costs --unattributed` listando cada registro órfão com provider, modelo, tokens, custo e instante
+- [ ] 7.7 `brian costs --export` em formato tabular com colunas separadas para custo pago e custo equivalente, mais `billing_mode`, `usage_source` e `cost_source` por registro
 
 ## 8. Verificação
 
@@ -79,3 +83,4 @@ Depende de todas as anteriores.
 - [ ] 8.3 Medir as consultas de custo com volume sintético equivalente a doze meses e confirmar o limite de 200ms que D-1 estabelece como critério de revisão
 - [ ] 8.4 Confirmar isolamento entre clientes por teste que falha se uma consulta escopada retornar registro de outro cliente ou não atribuído
 - [ ] 8.5 Confirmar que `brian costs --unattributed` retorna vazio em um cenário de ledger íntegro — teste de integridade do D-16
+- [ ] 8.6 Confirmar que consumo por assinatura produz custo equivalente e custo pago inexistente, e que nenhuma consulta apresenta o equivalente como valor pago

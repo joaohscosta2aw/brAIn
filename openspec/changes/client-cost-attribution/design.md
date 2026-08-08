@@ -74,9 +74,28 @@ declara tier degradado.
 Token não reportado é ausente. Token reportado como nenhum consumo é zero. Custo que
 não pôde ser determinado é desconhecido, nunca zero.
 
-Consumo de assinatura cai em custo desconhecido até que a change
-`capacity-windows-and-plans` introduza alocação por plano. Preferimos um buraco
-declarado a um número que não corresponde ao que se paga.
+### Custo pago e custo equivalente são colunas distintas, não alternativas
+
+O registro carrega dois valores monetários independentes. O custo pago existe quando
+o provider o informa. O custo equivalente em API é derivado de tokens e catálogo, e
+é calculável para qualquer `billing_mode` — inclusive assinatura.
+
+*Razão:* os dois respondem perguntas diferentes de negócio. O pago é base de custo;
+o equivalente é base de faturamento, porque o cliente pode ser cobrado a preço de
+token mesmo quando o consumo ocorreu sob assinatura. A diferença entre eles é margem,
+e é o que sustenta a decisão de permanecer na assinatura ou migrar para API.
+
+*Alternativa considerada:* um único campo de custo com rótulo de origem — foi o
+primeiro desenho desta change. Rejeitada: força escolher entre os dois valores no
+momento da gravação, destrói a informação de margem, e faria consumo de assinatura
+aparecer como custo desconhecido quando na verdade seu valor faturável é perfeitamente
+calculável.
+
+*Restrição derivada:* o equivalente nunca pode ser apresentado como valor pago
+(BRIAN-BLUEPRINT-V1.md §42.2). Confundi-los é erro de dinheiro, não de relatório.
+
+A alocação proporcional do custo do plano entre clientes fica para
+`capacity-windows-and-plans`, que introduz a declaração de planos.
 
 ### Correção de custo é supersessão auditável, não sobrescrita
 
@@ -122,10 +141,16 @@ derivada resolvem sem reescrever o histórico.
   Mitigação: a colisão só ocorre com instante idêntico e nenhuma referência de sessão;
   o adapter declara quando opera nesse regime.
 
-- **Custo desconhecido em massa** se a maior parte do consumo for por assinatura →
-  o ledger fica íntegro em tokens mas pobre em dólares até a change seguinte.
-  Aceito conscientemente: D-16 exige que nenhum token se perca, não que todo dólar
-  seja conhecido na v0.0.
+- **Cobertura do catálogo de preço vira dependência de faturamento.** Como o custo
+  equivalente é a base de cobrança, um modelo fora do catálogo deixa aquele consumo
+  sem valor faturável — não apenas sem relatório. Mitigação: a parcela sem catálogo
+  aparece explicitamente nas consultas e na exportação, para não virar receita
+  perdida em silêncio.
+
+- **Preço de tabela muda com o tempo.** O equivalente calculado hoje e o calculado
+  daqui a seis meses para o mesmo consumo podem divergir se o catálogo for atualizado
+  no lugar. Mitigação: o catálogo é versionado por vigência, de modo que o
+  equivalente de um consumo passado permaneça reproduzível.
 
 - **Crescimento do ledger** → D-1 estabelece que a decisão de SQLite se revê se uma
   consulta real passar de 200ms com doze meses de dados. Mitigação: medir com volume

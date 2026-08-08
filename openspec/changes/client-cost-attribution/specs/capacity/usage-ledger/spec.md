@@ -10,7 +10,8 @@ afirma sobre custo e capacidade deriva dele.
 
 O sistema SHALL registrar cada chamada de provider observada como um `usage_record`
 contendo, no mínimo: provider, modelo, tokens de entrada, tokens de cache, tokens de
-saída, tokens de reasoning, custo, e o instante de ocorrência (`occurred_at`).
+saída, tokens de reasoning, modo de cobrança (`billing_mode`) e o instante de
+ocorrência (`occurred_at`).
 
 Tokens não reportados por um provider SHALL ser registrados como ausentes, nunca
 como zero — ausência de dado e consumo zero são fatos distintos.
@@ -30,47 +31,94 @@ como zero — ausência de dado e consumo zero são fatos distintos.
 - **THEN** o sistema rejeita o registro com erro explícito
 - **AND** nenhuma linha parcial é gravada no ledger
 
-### Requirement: Procedência rotulada obrigatória
+### Requirement: Custo real e custo equivalente coexistem
 
-Todo `usage_record` SHALL carregar `usage_source` (`provider` | `brian_measured` |
-`estimated`) e `cost_source` (`provider` | `catalog` | `unknown`).
+O sistema SHALL manter, para cada `usage_record`, dois valores monetários distintos
+e independentes:
 
-Nenhum registro pode existir sem ambos os rótulos. O sistema SHALL NOT inferir um
-rótulo mais forte do que a evidência disponível sustenta.
+- **custo reportado pelo provider** — o que efetivamente se paga por aquela chamada,
+  quando o provider o informa;
+- **custo equivalente em API** — o que aqueles tokens custariam a preço de tabela,
+  calculado sempre que houver entrada de catálogo para o modelo.
 
-#### Scenario: Consumo lido diretamente do provider
-- **WHEN** tokens e custo vêm da resposta do próprio provider
-- **THEN** `usage_source` é `provider` e `cost_source` é `provider`
+Um SHALL NOT substituir o outro. A ausência de um SHALL NOT impedir o registro do
+outro. O custo equivalente SHALL ser calculável independentemente do `billing_mode`.
 
-#### Scenario: Custo derivado de catálogo de preço
-- **GIVEN** um provider que reporta tokens mas não reporta custo
+#### Scenario: Consumo por API
+- **GIVEN** consumo com `billing_mode` = `api`
+- **WHEN** o provider reporta o custo da chamada e existe catálogo para o modelo
+- **THEN** o custo reportado e o custo equivalente são ambos registrados
+- **AND** permanecem distinguíveis um do outro
+
+#### Scenario: Consumo por assinatura
+- **GIVEN** consumo com `billing_mode` = `subscription`, em que não há custo por chamada
 - **WHEN** existe entrada de catálogo para o modelo usado
-- **THEN** o custo é calculado a partir do catálogo
-- **AND** `cost_source` é `catalog`
+- **THEN** o custo equivalente em API é registrado
+- **AND** o custo reportado pelo provider permanece ausente
+- **AND** o registro não é marcado como de custo desconhecido
 
 #### Scenario: Modelo ausente do catálogo de preço
-- **GIVEN** um provider que reporta tokens mas não reporta custo
-- **WHEN** não existe entrada de catálogo para o modelo usado
+- **WHEN** não existe entrada de catálogo para o modelo usado e o provider não reporta custo
 - **THEN** `cost_source` é `unknown`
-- **AND** o custo não é registrado como zero
+- **AND** nenhum dos dois valores é registrado como zero
 
-### Requirement: Precedência da fonte de custo
+### Requirement: Procedência e confiança rotuladas
 
-Quando houver mais de uma fonte de custo disponível para o mesmo consumo, o valor
-reportado pelo provider SHALL prevalecer sobre o valor calculado por catálogo (D-6).
+Todo `usage_record` SHALL carregar `usage_source` (`provider` | `brian_measured` |
+`estimated`), `cost_source` (`provider` | `catalog` | `unknown`) e uma indicação de
+confiança do custo.
+
+O sistema SHALL NOT atribuir um rótulo mais forte do que a evidência disponível
+sustenta.
+
+#### Scenario: Tokens lidos diretamente do provider
+- **WHEN** as contagens de token vêm da resposta do próprio provider
+- **THEN** `usage_source` é `provider`
+
+#### Scenario: Tokens medidos pelo Brian
+- **GIVEN** um provider que não reporta contagens de token
+- **WHEN** o Brian deriva as contagens do que observou
+- **THEN** `usage_source` é `brian_measured`
+- **AND** a confiança do custo reflete essa origem
+
+### Requirement: Precedência do custo reportado sobre o catálogo
+
+Quando o provider reporta o custo de uma chamada, esse valor SHALL prevalecer como
+custo real sobre qualquer valor derivado de catálogo (D-6).
+
+Essa precedência SHALL NOT apagar o custo equivalente, que serve a outro propósito.
 
 #### Scenario: Provider e catálogo divergem
 - **GIVEN** um consumo com custo reportado pelo provider e entrada de catálogo para o mesmo modelo
 - **WHEN** o registro é gravado
-- **THEN** o custo persistido é o do provider
-- **AND** `cost_source` é `provider`
+- **THEN** o custo real persistido é o do provider e `cost_source` é `provider`
+- **AND** o custo equivalente derivado do catálogo permanece registrado à parte
 
 #### Scenario: Custo do provider chega depois do registro
-- **GIVEN** um `usage_record` gravado com `cost_source` = `catalog`
+- **GIVEN** um `usage_record` cujo custo real ainda não era conhecido
 - **WHEN** o provider posteriormente reporta o custo real da mesma chamada
-- **THEN** o custo é atualizado para o valor do provider
-- **AND** `cost_source` passa a `provider`
-- **AND** a substituição é auditável
+- **THEN** o custo real é preenchido e `cost_source` passa a `provider`
+- **AND** o valor anterior e sua fonte permanecem recuperáveis
+
+### Requirement: Custo equivalente nunca é apresentado como custo real
+
+O sistema SHALL NOT apresentar o custo equivalente em API como se fosse valor
+efetivamente pago, em nenhuma consulta, agregação ou exportação.
+
+Onde os dois aparecem juntos, cada valor SHALL ser identificável quanto à sua
+natureza.
+
+#### Scenario: Apresentação de consumo por assinatura
+- **GIVEN** consumo por assinatura com custo equivalente registrado
+- **WHEN** o custo desse consumo é apresentado
+- **THEN** o valor é identificado como equivalente em API
+- **AND** não é apresentado como valor pago ao provider
+
+#### Scenario: Período mistura assinatura e API
+- **GIVEN** um período com consumo por assinatura e consumo por API
+- **WHEN** o custo total do período é apresentado
+- **THEN** o valor efetivamente pago e o valor equivalente são apresentados como grandezas distintas
+- **AND** não são somados em um único número indiferenciado
 
 ### Requirement: Importação idempotente
 

@@ -16,9 +16,16 @@ comparação de providers — repousa sobre dado não confiável.
 - Novo ledger `usage_record` como unidade de verdade do consumo: tokens de entrada,
   cache, saída e reasoning, por chamada de provider.
 - Toda linha do ledger carrega **procedência rotulada**: `usage_source`
-  (`provider` | `brian_measured` | `estimated`) e `cost_source`
-  (`provider` | `catalog` | `unknown`). Fontes nunca se misturam sem rótulo.
-- Custo reportado pelo provider tem precedência sobre catálogo de preço (**D-6**).
+  (`provider` | `brian_measured` | `estimated`), `cost_source`
+  (`provider` | `catalog` | `unknown`) e `billing_mode`. Fontes nunca se misturam
+  sem rótulo.
+- **Dois valores monetários coexistem** por registro (BRIAN-BLUEPRINT-V1.md §42):
+  o custo efetivamente pago ao provider e o custo equivalente em API. O primeiro é
+  base de custo; o segundo é base de faturamento — pode-se cobrar do cliente a preço
+  de token mesmo operando sob assinatura. Um nunca substitui nem é apresentado como
+  o outro.
+- Custo reportado pelo provider tem precedência sobre catálogo de preço como valor
+  **pago** (**D-6**), sem apagar o equivalente, que serve a outro propósito.
 - Cadeia de atribuição até o cliente. Em observe mode, `run` e `phase` podem ser
   nulos; **cliente não pode**, exceto com `attribution_status = unattributed` explícito.
 - `unattributed` vira alarme observável e permanente até zerar — nunca estado normal
@@ -36,8 +43,13 @@ Sem breaking changes: não existe comportamento anterior.
 Escopo deliberadamente fora desta change:
 
 - **Janelas de capacidade, planos, % consumido, burn rate e budget** → change
-  `capacity-windows-and-plans`. Consequência: `cost_source = allocated_subscription`
-  fica fora daqui, pois depende de plano configurado.
+  `capacity-windows-and-plans`. Consequência: a **alocação proporcional do custo do
+  plano** entre clientes (assinatura de R$ 1.000 → 42% para um cliente → R$ 420)
+  fica fora daqui, pois exige o custo do plano declarado. O custo equivalente em API
+  **não** depende disso e está no escopo desta change.
+- **Análise de margem e a decisão "assinatura ou API"**, que comparam o pago com o
+  faturável. Dependem da alocação por plano; chegam com a change seguinte. Esta
+  change entrega os dois números que essa análise vai consumir.
 - **Bloqueio hard por limite.** No v0.0 as políticas alertam e registram; bloqueio
   exige budget, que é a próxima change.
 - **Orquestração, run, worktree, workflow** → v0.2. Aqui o modo é *observe*: contar e

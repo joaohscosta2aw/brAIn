@@ -83,14 +83,30 @@ por intervenção humana e não por observação.
 O sistema SHALL responder quanto foi consumido e gasto por cliente, com recorte por
 período e desdobramento por provider.
 
+A consulta SHALL expor o custo efetivamente pago e o custo equivalente em API como
+grandezas distintas, já que a primeira é base de custo e a segunda é base de
+faturamento.
+
 #### Scenario: Custo de um cliente no período
 - **WHEN** o operador consulta o custo de um cliente em um período
-- **THEN** o sistema retorna tokens e custo do cliente restritos àquele período
+- **THEN** o sistema retorna tokens, custo pago e custo equivalente do cliente restritos àquele período
+- **AND** os dois valores monetários são distinguíveis quanto à sua natureza
+
+#### Scenario: Cliente atendido inteiramente por assinatura
+- **GIVEN** um cliente cujo consumo no período ocorreu apenas sob `billing_mode` = `subscription`
+- **WHEN** o operador consulta seu custo
+- **THEN** o custo equivalente em API é retornado
+- **AND** o custo pago por chamada é apresentado como inexistente, não como zero
 
 #### Scenario: Desdobramento por provider
 - **WHEN** o operador consulta o custo de um cliente desdobrado por provider
 - **THEN** o sistema retorna tokens e custo por provider
 - **AND** a soma das linhas corresponde ao total do cliente no mesmo período
+
+#### Scenario: Desdobramento por modelo
+- **WHEN** o operador consulta o consumo desdobrado por modelo
+- **THEN** o sistema retorna tokens e custo equivalente por modelo
+- **AND** o resultado permite comparar o preço por token entre modelos de providers distintos
 
 #### Scenario: Cliente sem consumo no período
 - **WHEN** o operador consulta um cliente existente sem consumo no período
@@ -120,10 +136,19 @@ posterior do resultado.
 O sistema SHALL exportar o consumo atribuído em formato tabular para uso externo,
 preservando a procedência de cada valor.
 
+Como a exportação serve de base para faturamento, o custo pago e o custo equivalente
+em API SHALL aparecer em colunas separadas, nunca consolidados em um único valor.
+
 #### Scenario: Exportar custo de um período
 - **WHEN** o operador exporta o custo de um período
-- **THEN** o arquivo contém cliente, provider, modelo, tokens, custo e instante por registro
+- **THEN** o arquivo contém cliente, provider, modelo, tokens, instante, `billing_mode`, custo pago e custo equivalente por registro
 - **AND** contém `usage_source` e `cost_source` de cada registro
+
+#### Scenario: Exportação de consumo por assinatura
+- **GIVEN** registros de consumo por assinatura no período exportado
+- **WHEN** a exportação é gerada
+- **THEN** a coluna de custo pago fica vazia para esses registros
+- **AND** a coluna de custo equivalente traz o valor a preço de tabela
 
 #### Scenario: Exportação com custo desconhecido
 - **GIVEN** registros com custo desconhecido no período exportado
