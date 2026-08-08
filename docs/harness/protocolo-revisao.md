@@ -9,7 +9,10 @@ implementou não é revisor final do próprio trabalho.
 
 Nesta ordem, porque cada camada barata elimina trabalho da seguinte.
 
-1. **Verificações determinísticas** — compila, lint, formatação, testes passam.
+1. **Verificações determinísticas** — `cargo build`, `cargo fmt --check`,
+   `cargo clippy -- -D warnings`, `cargo test` e
+   `./scripts/verificar-invariantes.sh`. Comandos canônicos em
+   `docs/harness/ambiente.md`.
 2. **Aderência ao OpenSpec** — cada cenário do spec tem comportamento
    correspondente? Existe comportamento implementado que ninguém especificou?
 3. **Correção** — a lógica faz o que diz fazer, incluindo nos limites.
@@ -54,7 +57,7 @@ Revisão de IA informa a decisão; não a substitui.
 ## Ferramentas
 
 Uso e hierarquia de autoridade quando ferramentas divergem:
-`Prompts/ToolingAndContextPolicy,md`.
+`Prompts/ToolingAndContextPolicy.md`.
 
 Em resumo: comportamento aprovado em OpenSpec vence contrato executável, que vence
 código atual, que vence decisão de arquitetura, que vence índice ou grafo, que vence

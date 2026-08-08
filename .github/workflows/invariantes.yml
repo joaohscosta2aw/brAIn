@@ -1,0 +1,55 @@
+name: Invariantes
+
+# Portão mecânico do projeto. Existe porque PREMISSAS-BASICAS.md §22 manda
+# preferir regra executável a prosa, e até aqui toda regra do BrIAn vivia
+# apenas em documento.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  invariantes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Instalar OpenSpec
+        run: npm install -g @fission-ai/openspec
+
+      - name: Verificar invariantes
+        run: ./scripts/verificar-invariantes.sh
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: O projeto Rust já existe?
+        id: existe
+        run: |
+          if [ -f Cargo.toml ]; then
+            echo "sim=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "sim=false" >> "$GITHUB_OUTPUT"
+            echo "Cargo.toml ainda não existe — task 1.1 não foi executada. Pulando."
+          fi
+
+      # A partir da task 1.1 estes passos passam a valer sozinhos, sem que
+      # ninguém precise lembrar de ligá-los.
+      - name: Formatação
+        if: steps.existe.outputs.sim == 'true'
+        run: cargo fmt --check
+
+      - name: Lint
+        if: steps.existe.outputs.sim == 'true'
+        run: cargo clippy -- -D warnings
+
+      - name: Testes
+        if: steps.existe.outputs.sim == 'true'
+        run: cargo test

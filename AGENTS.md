@@ -56,8 +56,9 @@ Nunca workflow, UI ou learning antes de D-16 verde.
 
 | Assunto | Fonte |
 |---|---|
-| Comportamento aprovado | `openspec/specs/` |
+| Comportamento aprovado | `openspec/specs/` — passa a existir após o primeiro arquivamento de change |
 | Change ativa | `openspec/changes/` — descubra com `openspec list` |
+| Ambiente e comandos canônicos | `docs/harness/ambiente.md` |
 | Missão, princípios, fronteiras | `docs/PREMISSAS-BASICAS.md` |
 | Decisões travadas | `docs/DECISIONS.md` |
 | O que posso decidir sozinho; o que persistir | `docs/harness/autonomia-e-memoria.md` |
@@ -65,7 +66,7 @@ Nunca workflow, UI ou learning antes de D-16 verde.
 | Vou revisar | `docs/harness/protocolo-revisao.md` |
 | Arquitetura, subsistemas, schema SQLite | `BRIAN-BLUEPRINT-V1.md` |
 | Glossário do domínio | `BRIAN-BLUEPRINT-V1.md` §96 |
-| Política de ferramentas e autoridade | `Prompts/ToolingAndContextPolicy,md` |
+| Política de ferramentas e autoridade | `Prompts/ToolingAndContextPolicy.md` |
 
 ## Hipótese, não premissa
 
@@ -86,4 +87,4 @@ Classificação completa em `docs/harness/autonomia-e-memoria.md`.
 
 Grafo estrutural do repositório disponível via MCP `code-review-graph`
 (útil apenas quando houver código). Hierarquia de autoridade quando ferramentas
-divergem: `Prompts/ToolingAndContextPolicy,md`.
+divergem: `Prompts/ToolingAndContextPolicy.md`.

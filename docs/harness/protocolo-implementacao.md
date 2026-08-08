@@ -4,6 +4,8 @@ Para quem vai escrever código. Você não precisa conhecer nenhuma conversa ant
 
 ## Antes de escrever qualquer linha
 
+0. Confira `docs/harness/ambiente.md`. Se um pré-requisito estiver ausente,
+   resolva antes — não improvise toolchain nem comando.
 1. Leia `AGENTS.md`. São as leis, a fronteira e a ordem de construção.
 2. Descubra a change ativa: `openspec list`.
 3. Leia, naquela change: `proposal.md` (por quê), os arquivos em `specs/`
@@ -33,8 +35,13 @@ Para cada task:
 
 ## Ao terminar cada grupo de tasks
 
-Rode os testes. Confronte o resultado contra os cenários do spec, não contra sua
-própria expectativa.
+```
+cargo test
+./scripts/verificar-invariantes.sh
+```
+
+Confronte o resultado contra os cenários do spec, não contra sua própria
+expectativa.
 
 Um cenário do spec que você não consegue exercitar é sinal de uma destas três
 coisas, e vale descobrir qual: o código está incompleto, o cenário está mal

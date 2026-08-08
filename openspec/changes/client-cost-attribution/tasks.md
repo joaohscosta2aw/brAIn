@@ -1,6 +1,6 @@
 ## 1. Fundação
 
-- [ ] 1.1 Criar o projeto Rust com o binário `brian` e estrutura de módulos separando `storage/` do restante (D-9)
+- [ ] 1.1 Criar o projeto Rust com o binário `brian` e estrutura de módulos separando `storage/` do restante (D-9), cumprindo o contrato de `docs/harness/ambiente.md`: `Cargo.toml`, `rust-toolchain.toml` fixando a stable vigente, e `cargo build`/`test`/`clippy`/`fmt --check` executando num clone limpo
 - [ ] 1.2 Definir as traits de armazenamento que o núcleo consome, sem nenhuma dependência de SQLite fora de `storage/`
 - [ ] 1.3 Implementar migrações versionadas com registro das migrações já aplicadas, idempotentes na reexecução
 - [ ] 1.4 Criar o esquema inicial: `client`, `provider`, `usage_record`, `price_catalog`, `schema_migration` (referência: BRIAN-BLUEPRINT-V1.md §60)
@@ -55,12 +55,20 @@ Depende de 2 e 4.
 
 Depende de 5. Cada adapter é um incremento independente e verificável isoladamente.
 
-- [ ] 6.1 Adapter Claude — identificar a fonte de uso, declarar tier e campos disponíveis
-- [ ] 6.2 Adapter Codex — identificar a fonte de uso, declarar tier e campos disponíveis
-- [ ] 6.3 Adapter Gemini — identificar a fonte de uso, declarar tier e campos disponíveis
-- [ ] 6.4 Adapter Grok — identificar a fonte de uso, declarar tier e campos disponíveis
-- [ ] 6.5 Adapter ZCode — identificar a fonte de uso, declarar tier e campos disponíveis
-- [ ] 6.6 Expor a cobertura declarada por provider, de modo que provider sem adapter funcional apareça como lacuna explícita e não como ausência silenciosa de consumo
+**Critério de pronto, válido para 6.2 a 6.6.** Um adapter só pode ser marcado
+concluído quando existir uma amostra real capturada da fonte daquele provider,
+guardada como fixture no repositório, e um teste que falhe se o adapter não
+extrair dela exatamente os campos que declara fornecer. Declarar tier não é
+concluir a task — sem fixture, o adapter fica em `não tentado`.
+
+- [ ] 6.1 Definir o formato de fixture de amostra e o teste genérico que confronta os campos declarados por um adapter contra o que ele realmente extrai da amostra
+- [ ] 6.2 Adapter Claude — capturar amostra real, declarar tier e campos, provar extração contra a fixture
+- [ ] 6.3 Adapter Codex — capturar amostra real, declarar tier e campos, provar extração contra a fixture
+- [ ] 6.4 Adapter Gemini — capturar amostra real, declarar tier e campos, provar extração contra a fixture
+- [ ] 6.5 Adapter Grok — capturar amostra real, declarar tier e campos, provar extração contra a fixture
+- [ ] 6.6 Adapter ZCode — capturar amostra real, declarar tier e campos, provar extração contra a fixture
+- [ ] 6.7 Distinguir três estados por provider na cobertura declarada: `verificado` (fixture existe e o teste passa), `sem fonte utilizável` (fonte inspecionada e comprovadamente insuficiente, com o motivo registrado) e `não tentado`. Um provider nunca pode aparecer como ausência silenciosa de consumo
+- [ ] 6.8 Remover das amostras qualquer conteúdo de prompt, credencial ou dado de cliente antes de versioná-las — a fixture prova formato, não guarda trabalho real
 
 ## 7. Comandos
 
@@ -84,3 +92,4 @@ Depende de todas as anteriores.
 - [ ] 8.4 Confirmar isolamento entre clientes por teste que falha se uma consulta escopada retornar registro de outro cliente ou não atribuído
 - [ ] 8.5 Confirmar que `brian costs --unattributed` retorna vazio em um cenário de ledger íntegro — teste de integridade do D-16
 - [ ] 8.6 Confirmar que consumo por assinatura produz custo equivalente e custo pago inexistente, e que nenhuma consulta apresenta o equivalente como valor pago
+- [ ] 8.7 Confirmar que `./scripts/verificar-invariantes.sh` passa e que ele falha quando uma violação de D-9 ou de soma de custos é plantada deliberadamente
