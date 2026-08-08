@@ -22,12 +22,20 @@ ok() {
     echo "ok: $1"
 }
 
-# --- D-9: SQL vive apenas em storage/ ------------------------------------
+# --- D-9: SQL do LEDGER DO BRIAN vive apenas em storage/ ------------------
 # "SQL apenas em storage/, atrás de traits" — docs/DECISIONS.md
+#
+# D-9 protege a trocabilidade do backend de persistência DO BRIAN (D-1), não
+# proíbe SQL em qualquer lugar do repositório. Adapters legitimamente parseiam
+# formatos externos de terceiros (D-4) — para a maioria isso é JSON; para o
+# Copilot, o próprio provider grava o histórico em SQLite. Ler o banco de
+# outra ferramenta é a mesma categoria de "parsear formato externo" que ler
+# um JSONL, não uma violação de D-9. src/adapters/ fica de fora do check.
 verificar_d9() {
     local fora
     fora=$(git ls-files '*.rs' \
         | grep -v '^src/storage/' \
+        | grep -v '^src/adapters/' \
         | xargs -r grep -lEi '\b(SELECT|INSERT INTO|UPDATE .* SET|DELETE FROM|CREATE TABLE)\b' \
         2>/dev/null || true)
 

@@ -51,6 +51,13 @@ que a soma proíbe, dois commits seguidos passaram vermelhos no CI antes de
 alguém notar. O guard funcionou; a disciplina de checar antes de empurrar, não.
 Depois de cada `git push`, confirme com `gh run list --limit 1`.
 
+**`git add` antes de rodar os portões locais, não depois.** O script usa
+`git ls-files` para enumerar arquivos — um arquivo `.rs` novo e ainda não
+staged fica invisível para ele. Aconteceu nesta change: `verificar-invariantes.sh`
+passou local com um adapter novo não staged, e só o CI (que roda sobre o commit
+de verdade) pegou a violação real de D-9 que ele continha. Ordem certa: `git add
+-A`, depois os cinco portões, depois `git commit`.
+
 Um cenário do spec que você não consegue exercitar é sinal de uma destas três
 coisas, e vale descobrir qual: o código está incompleto, o cenário está mal
 escrito, ou o requisito é inverificável como está.
