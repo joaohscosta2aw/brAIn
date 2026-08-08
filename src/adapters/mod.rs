@@ -10,6 +10,7 @@ pub mod claude;
 pub mod codex;
 pub mod copilot;
 pub mod grok;
+pub mod qwen;
 mod tempo;
 
 /// Estado de cobertura de um provider — task 6.7. Três estados, nunca dois:
@@ -77,6 +78,25 @@ pub fn cobertura_v0_0() -> Vec<CoberturaProvider> {
         CoberturaProvider {
             provider_id: "github-copilot",
             status: StatusCobertura::Verificado,
+        },
+        CoberturaProvider {
+            provider_id: "qwen-deepseek",
+            status: StatusCobertura::Verificado,
+        },
+        CoberturaProvider {
+            provider_id: "qwen-zai",
+            status: StatusCobertura::Verificado,
+        },
+        CoberturaProvider {
+            provider_id: "qwen-kimi",
+            status: StatusCobertura::NaoTentado {
+                motivo: "Mesma fonte local que qwen-deepseek e qwen-zai (adapter já pronto, \
+                         só falta filtrar model.starts_with(\"kimi\")), mas configurado e \
+                         bloqueado por saldo do provider — zero chamadas bem-sucedidas \
+                         registradas para verificar contra dado real. Não é limitação técnica \
+                         da fonte nem falta de investigação"
+                    .into(),
+            },
         },
         CoberturaProvider {
             provider_id: "zcode",
