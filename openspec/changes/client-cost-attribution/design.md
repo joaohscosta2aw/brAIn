@@ -136,6 +136,23 @@ derivada resolvem sem reescrever o histórico.
   técnico e não se resolve em código. Mitigação: verificação humana antes de depender
   de qualquer fonte de assinatura; o desenho permite operar só com providers de API
   caso a verificação seja negativa.
+  **[Δ] Descoberta durante a implementação do grupo 6:** `headless_json` sozinho não
+  serve à importação retroativa que o grupo 5 já constrói (`coletar(período)`). Testado
+  em Claude e Grok: o modo headless só devolve o resultado de **uma chamada ao vivo**,
+  nunca um histórico consultável. O histórico de uso real, nos dois casos, só existe
+  no arquivo de sessão — exatamente o tier que a restrição inicial evitava.
+
+  **[Δ] Decisão do autor, revisitando a restrição acima:** aceitar o risco de R-4
+  conscientemente por enquanto, sem ter verificado os ToS ainda — decisão explícita,
+  revisável quando a verificação acontecer. Importante: propriedade do dado (a sessão
+  é do próprio operador) **não resolve** R-4 — o risco é sobre o que o ToS do provider
+  permite automatizar, não sobre de quem é o conteúdo.
+
+  Mitigação que permanece, mesmo aceitando o risco: os adapters leem **somente campos
+  de uso** (tokens, custo, modelo, identificador de chamada) dos arquivos de sessão —
+  nunca prompt, resposta, ou qualquer conteúdo de conversa. Isso não elimina o risco
+  de ToS, mas contém o dano se o risco se materializar: nenhum dado de cliente passa
+  pelo Brian além do que já é necessário para o próprio propósito do produto (D-16).
 
 - **Colisão de impressão digital sem ID de provider** → subcontagem silenciosa.
   Mitigação: a colisão só ocorre com instante idêntico e nenhuma referência de sessão;

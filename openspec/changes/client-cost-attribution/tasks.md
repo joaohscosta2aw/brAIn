@@ -61,14 +61,14 @@ guardada como fixture no repositório, e um teste que falhe se o adapter não
 extrair dela exatamente os campos que declara fornecer. Declarar tier não é
 concluir a task — sem fixture, o adapter fica em `não tentado`.
 
-- [ ] 6.1 Definir o formato de fixture de amostra e o teste genérico que confronta os campos declarados por um adapter contra o que ele realmente extrai da amostra
-- [ ] 6.2 Adapter Claude — capturar amostra real, declarar tier e campos, provar extração contra a fixture
-- [ ] 6.3 Adapter Codex — capturar amostra real, declarar tier e campos, provar extração contra a fixture
-- [ ] 6.4 Adapter Gemini — capturar amostra real, declarar tier e campos, provar extração contra a fixture
-- [ ] 6.5 Adapter Grok — capturar amostra real, declarar tier e campos, provar extração contra a fixture
-- [ ] 6.6 Adapter ZCode — capturar amostra real, declarar tier e campos, provar extração contra a fixture
-- [ ] 6.7 Distinguir três estados por provider na cobertura declarada: `verificado` (fixture existe e o teste passa), `sem fonte utilizável` (fonte inspecionada e comprovadamente insuficiente, com o motivo registrado) e `não tentado`. Um provider nunca pode aparecer como ausência silenciosa de consumo
-- [ ] 6.8 Remover das amostras qualquer conteúdo de prompt, credencial ou dado de cliente antes de versioná-las — a fixture prova formato, não guarda trabalho real
+- [x] 6.1 Definir o formato de fixture de amostra e o teste genérico que confronta os campos declarados por um adapter contra o que ele realmente extrai da amostra (padrão: parsing puro separado de I/O, testável sem tocar disco — `src/adapters/claude.rs::parse_linha`)
+- [x] 6.2 Adapter Claude — capturar amostra real, declarar tier e campos, provar extração contra a fixture (tier `session_files`, risco de R-4 aceito conscientemente — ver design.md)
+- [ ] 6.3 Adapter Codex — `não tentado`: CLI oficial não instalado nesta máquina
+- [ ] 6.4 Adapter Gemini — `não tentado`: CLI presente, sem autenticação configurada nesta máquina (credencial do operador, não decisão de código)
+- [ ] 6.5 Adapter Grok — `não tentado`: CLI presente e headless JSON funcional, mas sem histórico consultável nesse tier (só devolve resultado de chamada ao vivo); precisaria do mesmo trabalho de leitura de arquivo de sessão feito para Claude, ainda não replicado
+- [ ] 6.6 Adapter ZCode — `não tentado`: CLI oficial não instalado nesta máquina
+- [x] 6.7 Distinguir três estados por provider na cobertura declarada: `verificado` (fixture existe e o teste passa), `sem fonte utilizável` (fonte inspecionada e comprovadamente insuficiente, com o motivo registrado) e `não tentado`. Um provider nunca pode aparecer como ausência silenciosa de consumo (`src/adapters/mod.rs::StatusCobertura`, `cobertura_v0_0()`)
+- [x] 6.8 Remover das amostras qualquer conteúdo de prompt, credencial ou dado de cliente antes de versioná-las — a fixture prova formato, não guarda trabalho real (IDs fictícios, testado que `content` nunca aparece no registro extraído)
 
 ## 7. Comandos
 
