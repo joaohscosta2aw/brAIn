@@ -95,6 +95,15 @@ responde em segundos.
 Teste antes de escrever: *isto muda uma decisão futura, ou só conta o que aconteceu?*
 Se só conta, não escreva.
 
+## Cadência de enxugamento
+
+O contexto é revisado **por sprint**, não continuamente. Documento que engordou
+espera a revisão da sprint em vez de virar refactor no meio do trabalho.
+
+Sabe-se o que cortar olhando o que a task já diz: proposta e design que apenas
+reafirmam o blueprint ou defendem uma escolha em prosa são candidatos naturais.
+Cenário de spec que virou teste, não-objetivo e critério verificável ficam.
+
 ## Onde uma decisão nova mora
 
 | Alcance da decisão | Destino |
