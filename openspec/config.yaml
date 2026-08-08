@@ -19,7 +19,7 @@ rules:
     - "Se a proposta depende de H-1 (Context Governor), ela esta errada por construcao: H-1 e hipotese isolada e nada pode depender dela."
     - "Declare a versao alvo (v0.0..v1.0). Nada precede D-16 verde."
     - "Inclua secao de nao-objetivos. Escopo que nao envolve N providers x M clientes x T tempo e violacao de D-10."
-  spec:
+  specs:
     - "Requisitos descrevem comportamento observavel e testavel, nunca implementacao."
     - "Cenarios em GIVEN/WHEN/THEN. Inclua unhappy paths e failure modes; nao gere cenarios redundantes para inflar cobertura aparente."
     - "Todo dado de uso ou custo carrega fonte rotulada: provider | brian_measured | estimated | unknown. Fontes nunca se misturam sem rotulo (D-6)."
