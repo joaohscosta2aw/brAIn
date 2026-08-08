@@ -229,6 +229,18 @@ mod tests {
     }
 
     #[test]
+    fn linha_sem_timestamp_e_rejeitada_nunca_vira_registro() {
+        // Spec usage-ledger, cenário "Registro sem instante de ocorrência é
+        // rejeitado": a linha nunca vira ConsumoColetado -- não é gravada
+        // parcialmente com um instante inventado.
+        let linha = r#"{"requestId":"r1","sessionId":"s1","message":{"id":"m1","model":"claude-sonnet-5","usage":{"input_tokens":1,"output_tokens":1}}}"#;
+        assert!(
+            parse_linha(linha).is_none(),
+            "linha sem timestamp não pode virar registro"
+        );
+    }
+
+    #[test]
     fn timestamp_iso8601_bate_com_valor_conhecido() {
         // 2026-08-08T13:18:29Z -- conferido com Python datetime.timestamp().
         let t = parse_timestamp_iso8601("2026-08-08T13:18:29.657Z").unwrap();

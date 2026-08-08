@@ -99,7 +99,7 @@ Depende de 3, 4, 5.
 
 Depende de todas as anteriores.
 
-- [ ] 8.1 Cobrir cada cenário dos dois specs com teste automatizado, incluindo os unhappy paths
+- [x] 8.1 Cobrir cada cenário dos dois specs com teste automatizado, incluindo os unhappy paths. Auditoria dos 35 cenários (17 usage-ledger + 18 cost-attribution) contra os testes existentes, não por nome — por conteúdo. 4 lacunas reais fechadas: round-trip completo de todos os campos, `usage_source=BrianMeasured`, rejeição de linha sem timestamp, desdobramento por modelo, exportação com custo desconhecido. **1 bug real encontrado e corrigido**: `Agregado.pago`/`equivalente` eram `i64` puro — um cliente 100% em assinatura mostrava "0.00" em vez de "—" (violava literalmente o cenário "Cliente atendido inteiramente por assinatura"). Corrigido para `Option<i64>` em `comandos::Agregado`, propagado por `montar_resultado_client` e `formatar_agrupado`; confirmado no binário real, não só em teste
 - [ ] 8.2 Verificar as invariantes de integridade contra um ledger populado, incluindo registros órfãos e de custo desconhecido
 - [ ] 8.3 Medir as consultas de custo com volume sintético equivalente a doze meses e confirmar o limite de 200ms que D-1 estabelece como critério de revisão
 - [ ] 8.4 Confirmar isolamento entre clientes por teste que falha se uma consulta escopada retornar registro de outro cliente ou não atribuído

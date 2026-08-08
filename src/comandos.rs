@@ -129,10 +129,15 @@ fn fmt_opt_money(m: Option<Money>) -> String {
 
 /// Soma pago e equivalente separadamente, mais a contagem/soma de tokens
 /// cujo custo é desconhecido — a "receita não faturável" (task 3.8).
+///
+/// `pago`/`equivalente` são `Option<i64>`, não `i64`: um cliente 100% em
+/// assinatura tem `pago = None` (inexistente), não `Some(0)` (zero real).
+/// Confundir os dois é exatamente o que o spec proíbe (cost-attribution,
+/// "Cliente atendido inteiramente por assinatura").
 #[derive(Debug, Default)]
 pub struct Agregado {
-    pub pago: i64,
-    pub equivalente: i64,
+    pub pago: Option<i64>,
+    pub equivalente: Option<i64>,
     pub registros_custo_desconhecido: usize,
 }
 
@@ -140,10 +145,10 @@ pub fn agregar(registros: &[UsageRecord]) -> Agregado {
     let mut a = Agregado::default();
     for r in registros {
         if let Some(p) = r.custo.pago {
-            a.pago += p.0;
+            a.pago = Some(a.pago.unwrap_or(0) + p.0);
         }
         if let Some(e) = r.custo.equivalente_api {
-            a.equivalente += e.0;
+            a.equivalente = Some(a.equivalente.unwrap_or(0) + e.0);
         }
         if r.cost_source == CostSource::Unknown {
             a.registros_custo_desconhecido += 1;
@@ -157,8 +162,8 @@ pub fn agregar(registros: &[UsageRecord]) -> Agregado {
 pub enum ResultadoCostsClient {
     ClienteInexistente,
     Ok {
-        pago: Money,
-        equivalente: Money,
+        pago: Option<Money>,
+        equivalente: Option<Money>,
         registros: usize,
     },
 }
@@ -169,8 +174,8 @@ pub fn montar_resultado_client(existe: bool, registros: &[UsageRecord]) -> Resul
     }
     let a = agregar(registros);
     ResultadoCostsClient::Ok {
-        pago: Money(a.pago),
-        equivalente: Money(a.equivalente),
+        pago: a.pago.map(Money),
+        equivalente: a.equivalente.map(Money),
         registros: registros.len(),
     }
 }
@@ -186,7 +191,9 @@ pub fn formatar_client(resultado: &ResultadoCostsClient, client_id: &str) -> Str
             registros,
         } => {
             format!(
-                "cliente: {client_id}\nregistros: {registros}\npago: {pago}\nequivalente: {equivalente}"
+                "cliente: {client_id}\nregistros: {registros}\npago: {}\nequivalente: {}",
+                fmt_opt_money(*pago),
+                fmt_opt_money(*equivalente)
             )
         }
     }
@@ -221,21 +228,25 @@ pub fn agrupar_por<'a>(
 
 pub fn formatar_agrupado(grupos: &[(String, Agregado)], rotulo_coluna: &str) -> String {
     let mut linhas = vec![format!("{rotulo_coluna}\tpago\tequivalente\tregistros")];
-    let (mut total_pago, mut total_equiv) = (0i64, 0i64);
+    let (mut total_pago, mut total_equiv): (Option<i64>, Option<i64>) = (None, None);
     for (chave, a) in grupos {
         linhas.push(format!(
             "{chave}\t{}\t{}\t{}",
-            Money(a.pago),
-            Money(a.equivalente),
+            fmt_opt_money(a.pago.map(Money)),
+            fmt_opt_money(a.equivalente.map(Money)),
             a.registros_custo_desconhecido
         ));
-        total_pago += a.pago;
-        total_equiv += a.equivalente;
+        if let Some(p) = a.pago {
+            total_pago = Some(total_pago.unwrap_or(0) + p);
+        }
+        if let Some(e) = a.equivalente {
+            total_equiv = Some(total_equiv.unwrap_or(0) + e);
+        }
     }
     linhas.push(format!(
         "total\t{}\t{}",
-        Money(total_pago),
-        Money(total_equiv)
+        fmt_opt_money(total_pago.map(Money)),
+        fmt_opt_money(total_equiv.map(Money))
     ));
     linhas.join("\n")
 }
@@ -490,8 +501,12 @@ mod tests {
             ),
         ];
         let a = agregar(&regs);
-        assert_eq!(a.pago, 1_000_000, "só o registro com pago conhecido soma");
-        assert_eq!(a.equivalente, 2_000_000);
+        assert_eq!(
+            a.pago,
+            Some(1_000_000),
+            "só o registro com pago conhecido soma"
+        );
+        assert_eq!(a.equivalente, Some(2_000_000));
     }
 
     #[test]
@@ -506,8 +521,53 @@ mod tests {
         )];
         let a = agregar(&regs);
         assert_eq!(a.registros_custo_desconhecido, 1);
-        assert_eq!(a.pago, 0);
-        assert_eq!(a.equivalente, 0);
+        assert_eq!(
+            a.pago, None,
+            "nenhum registro com pago -- inexistente, não zero"
+        );
+        assert_eq!(a.equivalente, None);
+    }
+
+    #[test]
+    fn cliente_100_por_cento_assinatura_pago_e_inexistente_nao_zero() {
+        // Spec cost-attribution, "Cliente atendido inteiramente por
+        // assinatura": custo pago aparece como inexistente, não como zero.
+        // Bug real encontrado na auditoria do grupo 8: Agregado.pago era
+        // i64 puro, então "nenhum registro pago" e "somou zero" ficavam
+        // indistinguíveis -- mostrava "0.00" em vez de "—".
+        let regs = vec![registro(
+            "codex",
+            "gpt",
+            None,
+            Some(500_000),
+            CostSource::Catalog,
+            Some("xpto"),
+        )];
+        let resultado = montar_resultado_client(true, &regs);
+        let texto = formatar_client(&resultado, "xpto");
+        assert!(
+            texto.contains("pago: —"),
+            "cliente só com consumo por assinatura deve mostrar pago inexistente, não '0.00'. Saída: {texto}"
+        );
+    }
+
+    #[test]
+    fn grupo_100_por_cento_assinatura_pago_e_inexistente_nao_zero() {
+        // Mesmo bug, caminho de agrupamento (--by provider/model).
+        let regs = vec![registro(
+            "codex",
+            "gpt",
+            None,
+            Some(500_000),
+            CostSource::Catalog,
+            Some("xpto"),
+        )];
+        let grupos = agrupar_por(&regs, |r| r.provider_id.as_str());
+        let saida = formatar_agrupado(&grupos, "provider");
+        assert!(
+            !saida.contains("0.00"),
+            "nenhuma linha deve mostrar '0.00' quando não há pago real. Saída: {saida}"
+        );
     }
 
     #[test]
@@ -541,8 +601,8 @@ mod tests {
         let grupos = agrupar_por(&regs, |r| r.provider_id.as_str());
         assert_eq!(grupos.len(), 2);
 
-        let total_grupos: i64 = grupos.iter().map(|(_, a)| a.pago).sum();
-        let total_direto: i64 = agregar(&regs).pago;
+        let total_grupos: i64 = grupos.iter().filter_map(|(_, a)| a.pago).sum();
+        let total_direto: i64 = agregar(&regs).pago.unwrap_or(0);
         assert_eq!(
             total_grupos, total_direto,
             "soma dos grupos bate com o total"
@@ -601,5 +661,64 @@ mod tests {
     #[test]
     fn unattributed_vazio_tem_mensagem_clara() {
         assert_eq!(formatar_unattributed(&[]), "nenhum consumo não-atribuído");
+    }
+
+    #[test]
+    fn agrupar_por_model_compara_providers_distintos_numa_base_comum() {
+        // Spec cost-attribution, "Desdobramento por modelo": permite
+        // comparar preço por token entre modelos de providers distintos.
+        let regs = vec![
+            registro(
+                "claude",
+                "opus",
+                Some(1_000_000),
+                Some(1_500_000),
+                CostSource::Provider,
+                Some("a"),
+            ),
+            registro(
+                "grok",
+                "grok-4.5",
+                Some(200_000),
+                Some(200_000),
+                CostSource::Provider,
+                Some("a"),
+            ),
+        ];
+        let grupos = agrupar_por(&regs, |r| r.model.as_str());
+        assert_eq!(
+            grupos.len(),
+            2,
+            "cada modelo é um grupo, mesmo de providers diferentes"
+        );
+        assert!(grupos.iter().any(|(m, _)| m == "opus"));
+        assert!(grupos.iter().any(|(m, _)| m == "grok-4.5"));
+    }
+
+    #[test]
+    fn export_csv_custo_desconhecido_nao_aparece_como_zero() {
+        // Spec usage-ledger, "Exportação com custo desconhecido": aparece
+        // marcado como desconhecido, nunca como zero.
+        let regs = vec![registro(
+            "x",
+            "y",
+            None,
+            None,
+            CostSource::Unknown,
+            Some("xpto"),
+        )];
+        let csv = formatar_export_csv(&regs);
+        let cabecalho: Vec<&str> = csv.lines().next().unwrap().split(',').collect();
+        let idx_pago = cabecalho.iter().position(|c| *c == "custo_pago").unwrap();
+        let idx_equiv = cabecalho
+            .iter()
+            .position(|c| *c == "custo_equivalente")
+            .unwrap();
+        let campos: Vec<&str> = csv.lines().nth(1).unwrap().split(',').collect();
+        assert_eq!(campos[idx_pago], "—", "pago desconhecido não é zero");
+        assert_eq!(
+            campos[idx_equiv], "—",
+            "equivalente desconhecido não é zero"
+        );
     }
 }

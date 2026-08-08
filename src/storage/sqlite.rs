@@ -550,6 +550,43 @@ mod tests {
     }
 
     #[test]
+    fn provider_reporta_consumo_completo_todos_os_campos_voltam() {
+        // Spec usage-ledger, cenário "Provider reporta consumo completo":
+        // um usage_record é criado com TODOS os campos preenchidos e
+        // occurred_at do momento da chamada -- não só 2 campos, os 4
+        // categorias de token, modelo e instante inteiros.
+        let s = store();
+        let mut consumo = novo_consumo("k1", "claude", "opus");
+        consumo.tokens = Tokens {
+            input: Some(100),
+            cache: Some(50),
+            output: Some(30),
+            reasoning: Some(10),
+        };
+        consumo.occurred_at = Instante(1_700_000_123);
+
+        let r = s.gravar_consumo(consumo).unwrap();
+
+        assert_eq!(r.model, "opus");
+        assert_eq!(r.tokens.input, Some(100));
+        assert_eq!(r.tokens.cache, Some(50));
+        assert_eq!(r.tokens.output, Some(30));
+        assert_eq!(r.tokens.reasoning, Some(10));
+        assert_eq!(r.occurred_at, Instante(1_700_000_123));
+    }
+
+    #[test]
+    fn usage_source_brian_measured_sobrevive_ao_roundtrip() {
+        // Spec: "Tokens medidos pelo Brian" -- usage_source=brian_measured
+        // quando o provider não reporta contagens diretamente.
+        let s = store();
+        let mut consumo = novo_consumo("k1", "claude", "opus");
+        consumo.usage_source = UsageSource::BrianMeasured;
+        let r = s.gravar_consumo(consumo).unwrap();
+        assert_eq!(r.usage_source, UsageSource::BrianMeasured);
+    }
+
+    #[test]
     fn dedup_key_repetida_nao_duplica() {
         let s = store();
         let a = s
