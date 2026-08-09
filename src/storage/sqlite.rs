@@ -4,12 +4,14 @@
 //! garante isso a cada push.
 
 use super::{
-    EntradaCatalogo, NovoConsumo, Periodo, Result, Revisao, StorageError, Store,
-    ViolacaoIntegridade,
+    EntradaCatalogo, NovaCredencialMetadados, NovaNota, NovoConsumo, NovoEvento, NovoPerfil,
+    NovoPlano, NovoQuotaSignal, NovoRun, Periodo, PlanoRegistrado, QuotaSignalRegistrado, Result,
+    Revisao, StorageError, Store, ViolacaoIntegridade,
 };
 use crate::domain::{
-    AttributionStatus, BillingMode, CostSource, Custo, Instante, Money, Tokens, UsageRecord,
-    UsageSource,
+    AttributionStatus, BillingMode, CategoriaNota, ClasseSecret, ContextoAtivo, CostSource,
+    CredencialRegistrada, Custo, EventoDeRun, Instante, Money, NotaDeMemoria, PerfilIdentidade,
+    ProviderBinding, RunRegistrado, StatusRun, Tokens, UsageRecord, UsageSource,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use std::sync::Mutex;
@@ -17,7 +19,13 @@ use std::sync::Mutex;
 /// Migrações aplicadas em ordem. Cada uma é aplicada no máximo uma vez — a
 /// tabela `schema_migration` registra o que já rodou (task 1.3: "idempotentes
 /// na reexecução").
-const MIGRATIONS: &[(i64, &str)] = &[(1, include_str!("migrations/0001_inicial.sql"))];
+const MIGRATIONS: &[(i64, &str)] = &[
+    (1, include_str!("migrations/0001_inicial.sql")),
+    (2, include_str!("migrations/0002_capacidade.sql")),
+    (3, include_str!("migrations/0003_identidade.sql")),
+    (4, include_str!("migrations/0004_continuidade.sql")),
+    (5, include_str!("migrations/0005_execucao.sql")),
+];
 
 pub struct SqliteStore {
     conn: Mutex<Connection>,
@@ -395,9 +403,582 @@ impl Store for SqliteStore {
             .optional()
             .map_err(|e| StorageError::Backend(e.to_string()))
     }
+
+    fn registrar_plano(&self, novo: NovoPlano) -> Result<()> {
+        let conn = self.conn();
+
+        let atual: Option<(String, Option<String>)> = conn
+            .query_row(
+                "SELECT billing_mode, plan_label FROM provider_plan
+                 WHERE provider_id = ?1 AND ativo_ate IS NULL",
+                params![novo.provider_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+
+        let mudou = match &atual {
+            None => true,
+            Some((bm, label)) => {
+                bm.as_str() != billing_mode_to_str(novo.billing_mode)
+                    || label.as_deref() != novo.plan_label.as_deref()
+            }
+        };
+        if !mudou {
+            // Plano confirmado igual ao vigente: não abre nova vigência, mas
+            // registra que a fonte foi consultada agora com sucesso (spec:
+            // "identifica a informação como potencialmente desatualizada" —
+            // sem isto, uma fonte que passa a falhar silenciosamente nunca
+            // deixaria rastro de que o valor exibido está velho).
+            if atual.is_some() {
+                conn.execute(
+                    "UPDATE provider_plan SET verificado_em = ?1
+                     WHERE provider_id = ?2 AND ativo_ate IS NULL",
+                    params![novo.detectado_em.0, novo.provider_id],
+                )
+                .map_err(|e| StorageError::Backend(e.to_string()))?;
+            }
+            return Ok(());
+        }
+
+        if atual.is_some() {
+            conn.execute(
+                "UPDATE provider_plan SET ativo_ate = ?1
+                 WHERE provider_id = ?2 AND ativo_ate IS NULL",
+                params![novo.detectado_em.0, novo.provider_id],
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        }
+
+        conn.execute(
+            "INSERT INTO provider_plan
+                (provider_id, billing_mode, plan_label, ativo_desde, ativo_ate, verificado_em)
+             VALUES (?1, ?2, ?3, ?4, NULL, ?4)",
+            params![
+                novo.provider_id,
+                billing_mode_to_str(novo.billing_mode),
+                novo.plan_label,
+                novo.detectado_em.0,
+            ],
+        )
+        .map_err(|e| StorageError::Backend(e.to_string()))?;
+
+        Ok(())
+    }
+
+    fn plano_vigente(&self, provider_id: &str) -> Result<Option<PlanoRegistrado>> {
+        self.conn()
+            .query_row(
+                "SELECT provider_id, billing_mode, plan_label, ativo_desde, ativo_ate, verificado_em
+                 FROM provider_plan WHERE provider_id = ?1 AND ativo_ate IS NULL",
+                params![provider_id],
+                row_to_plano,
+            )
+            .optional()
+            .map_err(|e| StorageError::Backend(e.to_string()))
+    }
+
+    fn plano_vigente_em(&self, provider_id: &str, em: Instante) -> Result<Option<PlanoRegistrado>> {
+        self.conn()
+            .query_row(
+                "SELECT provider_id, billing_mode, plan_label, ativo_desde, ativo_ate, verificado_em
+                 FROM provider_plan
+                 WHERE provider_id = ?1 AND ativo_desde <= ?2
+                   AND (ativo_ate IS NULL OR ativo_ate > ?2)
+                 ORDER BY ativo_desde DESC LIMIT 1",
+                params![provider_id, em.0],
+                row_to_plano,
+            )
+            .optional()
+            .map_err(|e| StorageError::Backend(e.to_string()))
+    }
+
+    fn upsert_quota_signal(&self, sinal: NovoQuotaSignal) -> Result<()> {
+        self.conn()
+            .execute(
+                "INSERT INTO quota_signal
+                    (provider_id, bucket_id, grupo, remaining_percent, reset_at, observed_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT (provider_id, bucket_id) DO UPDATE SET
+                    grupo = excluded.grupo,
+                    remaining_percent = excluded.remaining_percent,
+                    reset_at = excluded.reset_at,
+                    observed_at = excluded.observed_at",
+                params![
+                    sinal.provider_id,
+                    sinal.bucket_id,
+                    sinal.grupo,
+                    sinal.remaining_percent,
+                    sinal.reset_at.map(|i| i.0),
+                    sinal.observed_at.0,
+                ],
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        Ok(())
+    }
+
+    fn quota_signals(&self, provider_id: &str) -> Result<Vec<QuotaSignalRegistrado>> {
+        let conn = self.conn();
+        let mut stmt = conn
+            .prepare(
+                "SELECT provider_id, bucket_id, grupo, remaining_percent, reset_at, observed_at
+                 FROM quota_signal WHERE provider_id = ?1
+                 ORDER BY bucket_id",
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![provider_id], row_to_quota_signal)
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| StorageError::Backend(e.to_string()))
+    }
+
+    fn criar_perfil(&self, novo: NovoPerfil) -> Result<PerfilIdentidade> {
+        let conn = self.conn();
+
+        conn.execute(
+            "INSERT INTO identity_profile
+                (id, client_id, project, git_author_name, git_author_email, github_org, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                novo.id,
+                novo.client_id,
+                novo.project,
+                novo.git_author_name,
+                novo.git_author_email,
+                novo.github_org,
+                novo.created_at.0,
+            ],
+        )
+        .map_err(|e| StorageError::Invalid(e.to_string()))?;
+
+        for binding in &novo.bindings {
+            conn.execute(
+                "INSERT INTO provider_binding (identity_profile_id, provider_id, config_home)
+                 VALUES (?1, ?2, ?3)",
+                params![novo.id, binding.provider_id, binding.config_home],
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        }
+
+        Ok(PerfilIdentidade {
+            id: novo.id,
+            client_id: novo.client_id,
+            project: novo.project,
+            git_author_name: novo.git_author_name,
+            git_author_email: novo.git_author_email,
+            github_org: novo.github_org,
+            bindings: novo.bindings,
+        })
+    }
+
+    fn perfil(&self, id: &str) -> Result<Option<PerfilIdentidade>> {
+        let conn = self.conn();
+        let base = conn
+            .query_row(
+                "SELECT id, client_id, project, git_author_name, git_author_email, github_org
+                 FROM identity_profile WHERE id = ?1",
+                params![id],
+                row_to_perfil_base,
+            )
+            .optional()
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+
+        let Some(mut perfil) = base else {
+            return Ok(None);
+        };
+        perfil.bindings = self.bindings_do_perfil(&conn, id)?;
+        Ok(Some(perfil))
+    }
+
+    fn perfis_do_cliente(&self, client_id: &str) -> Result<Vec<PerfilIdentidade>> {
+        let conn = self.conn();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, client_id, project, git_author_name, git_author_email, github_org
+                 FROM identity_profile WHERE client_id = ?1 ORDER BY project",
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![client_id], row_to_perfil_base)
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        let mut perfis = rows
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+
+        for perfil in &mut perfis {
+            perfil.bindings = self.bindings_do_perfil(&conn, &perfil.id)?;
+        }
+        Ok(perfis)
+    }
+
+    fn conectar(&self, contexto: ContextoAtivo) -> Result<()> {
+        self.conn()
+            .execute(
+                "INSERT INTO active_context (id, client_id, project, identity_profile_id, connected_at)
+                 VALUES (1, ?1, ?2, ?3, ?4)
+                 ON CONFLICT (id) DO UPDATE SET
+                    client_id = excluded.client_id,
+                    project = excluded.project,
+                    identity_profile_id = excluded.identity_profile_id,
+                    connected_at = excluded.connected_at",
+                params![
+                    contexto.client_id,
+                    contexto.project,
+                    contexto.identity_profile_id,
+                    contexto.connected_at.0,
+                ],
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        Ok(())
+    }
+
+    fn desconectar(&self) -> Result<()> {
+        self.conn()
+            .execute("DELETE FROM active_context WHERE id = 1", params![])
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        Ok(())
+    }
+
+    fn contexto_ativo(&self) -> Result<Option<ContextoAtivo>> {
+        self.conn()
+            .query_row(
+                "SELECT client_id, project, identity_profile_id, connected_at
+                 FROM active_context WHERE id = 1",
+                params![],
+                |row| {
+                    Ok(ContextoAtivo {
+                        client_id: row.get(0)?,
+                        project: row.get(1)?,
+                        identity_profile_id: row.get(2)?,
+                        connected_at: Instante(row.get(3)?),
+                    })
+                },
+            )
+            .optional()
+            .map_err(|e| StorageError::Backend(e.to_string()))
+    }
+
+    fn registrar_credencial(&self, nova: NovaCredencialMetadados) -> Result<CredencialRegistrada> {
+        self.conn()
+            .execute(
+                "INSERT INTO credential_ref
+                    (id, label, keychain_service, keychain_account, class, created_at, expires_at, rotation_policy)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    nova.id,
+                    nova.label,
+                    nova.keychain_service,
+                    nova.keychain_account,
+                    classe_secret_to_str(nova.class),
+                    nova.created_at.0,
+                    nova.expires_at.map(|i| i.0),
+                    nova.rotation_policy,
+                ],
+            )
+            .map_err(|e| StorageError::Invalid(e.to_string()))?;
+
+        Ok(CredencialRegistrada {
+            id: nova.id,
+            label: nova.label,
+            keychain_service: nova.keychain_service,
+            keychain_account: nova.keychain_account,
+            class: nova.class,
+            created_at: nova.created_at,
+            expires_at: nova.expires_at,
+            last_used_at: None,
+            rotation_policy: nova.rotation_policy,
+        })
+    }
+
+    fn credencial(&self, id: &str) -> Result<Option<CredencialRegistrada>> {
+        self.conn()
+            .query_row(
+                "SELECT id, label, keychain_service, keychain_account, class, created_at,
+                        expires_at, last_used_at, rotation_policy
+                 FROM credential_ref WHERE id = ?1",
+                params![id],
+                row_to_credencial,
+            )
+            .optional()
+            .map_err(|e| StorageError::Backend(e.to_string()))
+    }
+
+    fn listar_credenciais(&self) -> Result<Vec<CredencialRegistrada>> {
+        let conn = self.conn();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, label, keychain_service, keychain_account, class, created_at,
+                        expires_at, last_used_at, rotation_policy
+                 FROM credential_ref ORDER BY created_at",
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![], row_to_credencial)
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| StorageError::Backend(e.to_string()))
+    }
+
+    fn atualizar_ultimo_uso_credencial(&self, id: &str, em: Instante) -> Result<()> {
+        let alterado = self
+            .conn()
+            .execute(
+                "UPDATE credential_ref SET last_used_at = ?1 WHERE id = ?2",
+                params![em.0, id],
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        if alterado == 0 {
+            return Err(StorageError::NotFound(format!("credencial {id}")));
+        }
+        Ok(())
+    }
+
+    fn registrar_nota(&self, nova: NovaNota) -> Result<NotaDeMemoria> {
+        if matches!(nova.categoria, CategoriaNota::Decisao) && nova.rationale.is_none() {
+            return Err(StorageError::Invalid("decisão exige rationale".to_string()));
+        }
+
+        self.conn()
+            .execute(
+                "INSERT INTO memory_note (id, client_id, project, categoria, texto, rationale, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    nova.id,
+                    nova.client_id,
+                    nova.project,
+                    categoria_nota_to_str(nova.categoria),
+                    nova.texto,
+                    nova.rationale,
+                    nova.created_at.0,
+                ],
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+
+        Ok(NotaDeMemoria {
+            id: nova.id,
+            client_id: nova.client_id,
+            project: nova.project,
+            categoria: nova.categoria,
+            texto: nova.texto,
+            rationale: nova.rationale,
+            created_at: nova.created_at,
+        })
+    }
+
+    fn notas_do_contexto(
+        &self,
+        client_id: &str,
+        project: Option<&str>,
+    ) -> Result<Vec<NotaDeMemoria>> {
+        let conn = self.conn();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, client_id, project, categoria, texto, rationale, created_at
+                 FROM memory_note
+                 WHERE client_id = ?1 AND project IS ?2
+                 ORDER BY created_at DESC",
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![client_id, project], row_to_nota)
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| StorageError::Backend(e.to_string()))
+    }
+
+    fn criar_run(&self, novo: NovoRun) -> Result<RunRegistrado> {
+        self.conn()
+            .execute(
+                "INSERT INTO run
+                    (id, client_id, project, base_commit, worktree_path, branch,
+                     provider_id, pid, status, custo_equivalente_micros, started_at, finished_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, NULL, ?9, NULL)",
+                params![
+                    novo.id,
+                    novo.client_id,
+                    novo.project,
+                    novo.base_commit,
+                    novo.worktree_path,
+                    novo.branch,
+                    novo.provider_id,
+                    status_run_to_str(StatusRun::EmExecucao),
+                    novo.started_at.0,
+                ],
+            )
+            .map_err(|e| StorageError::Invalid(e.to_string()))?;
+
+        Ok(RunRegistrado {
+            id: novo.id,
+            client_id: novo.client_id,
+            project: novo.project,
+            base_commit: novo.base_commit,
+            worktree_path: novo.worktree_path,
+            branch: novo.branch,
+            provider_id: novo.provider_id,
+            pid: None,
+            status: StatusRun::EmExecucao,
+            custo_equivalente: None,
+            started_at: novo.started_at,
+            finished_at: None,
+        })
+    }
+
+    fn run(&self, id: &str) -> Result<Option<RunRegistrado>> {
+        self.conn()
+            .query_row(
+                "SELECT id, client_id, project, base_commit, worktree_path, branch,
+                        provider_id, pid, status, custo_equivalente_micros, started_at, finished_at
+                 FROM run WHERE id = ?1",
+                params![id],
+                row_to_run,
+            )
+            .optional()
+            .map_err(|e| StorageError::Backend(e.to_string()))
+    }
+
+    fn definir_pid_run(&self, run_id: &str, pid: u32) -> Result<()> {
+        let alterado = self
+            .conn()
+            .execute(
+                "UPDATE run SET pid = ?1 WHERE id = ?2",
+                params![pid, run_id],
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        if alterado == 0 {
+            return Err(StorageError::NotFound(format!("run {run_id}")));
+        }
+        Ok(())
+    }
+
+    fn definir_worktree_run(&self, run_id: &str, worktree_path: &str, branch: &str) -> Result<()> {
+        let alterado = self
+            .conn()
+            .execute(
+                "UPDATE run SET worktree_path = ?1, branch = ?2 WHERE id = ?3",
+                params![worktree_path, branch, run_id],
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        if alterado == 0 {
+            return Err(StorageError::NotFound(format!("run {run_id}")));
+        }
+        Ok(())
+    }
+
+    fn atualizar_status_run(
+        &self,
+        run_id: &str,
+        status: StatusRun,
+        finished_at: Option<Instante>,
+        custo_equivalente: Option<Money>,
+    ) -> Result<()> {
+        let alterado = self
+            .conn()
+            .execute(
+                "UPDATE run SET status = ?1, finished_at = ?2, custo_equivalente_micros = ?3
+                 WHERE id = ?4",
+                params![
+                    status_run_to_str(status),
+                    finished_at.map(|i| i.0),
+                    custo_equivalente.map(|m| m.0),
+                    run_id,
+                ],
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        if alterado == 0 {
+            return Err(StorageError::NotFound(format!("run {run_id}")));
+        }
+        Ok(())
+    }
+
+    fn runs_em_execucao(&self) -> Result<Vec<RunRegistrado>> {
+        self.runs_por_status(StatusRun::EmExecucao)
+    }
+
+    fn runs_abandonados(&self) -> Result<Vec<RunRegistrado>> {
+        self.runs_por_status(StatusRun::Abandonado)
+    }
+
+    fn registrar_evento_run(&self, novo: NovoEvento) -> Result<()> {
+        self.conn()
+            .execute(
+                "INSERT INTO run_event (id, run_id, tipo, detalhe, ocorrido_em)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    novo.id,
+                    novo.run_id,
+                    novo.tipo,
+                    novo.detalhe,
+                    novo.ocorrido_em.0
+                ],
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        Ok(())
+    }
+
+    fn eventos_do_run(&self, run_id: &str) -> Result<Vec<EventoDeRun>> {
+        let conn = self.conn();
+        let mut stmt = conn
+            .prepare(
+                "SELECT run_id, tipo, detalhe, ocorrido_em FROM run_event
+                 WHERE run_id = ?1 ORDER BY ocorrido_em",
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![run_id], |row| {
+                Ok(EventoDeRun {
+                    run_id: row.get(0)?,
+                    tipo: row.get(1)?,
+                    detalhe: row.get(2)?,
+                    ocorrido_em: Instante(row.get(3)?),
+                })
+            })
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| StorageError::Backend(e.to_string()))
+    }
 }
 
 impl SqliteStore {
+    fn runs_por_status(&self, status: StatusRun) -> Result<Vec<RunRegistrado>> {
+        let conn = self.conn();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, client_id, project, base_commit, worktree_path, branch,
+                        provider_id, pid, status, custo_equivalente_micros, started_at, finished_at
+                 FROM run WHERE status = ?1",
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![status_run_to_str(status)], row_to_run)
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| StorageError::Backend(e.to_string()))
+    }
+
+    fn bindings_do_perfil(
+        &self,
+        conn: &Connection,
+        identity_profile_id: &str,
+    ) -> Result<Vec<ProviderBinding>> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT provider_id, config_home FROM provider_binding
+                 WHERE identity_profile_id = ?1 ORDER BY provider_id",
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![identity_profile_id], |row| {
+                Ok(ProviderBinding {
+                    provider_id: row.get(0)?,
+                    config_home: row.get(1)?,
+                })
+            })
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| StorageError::Backend(e.to_string()))
+    }
+
     fn consultar_periodo(&self, sql: &str, periodo: Periodo) -> Result<Vec<UsageRecord>> {
         let conn = self.conn();
         let mut stmt = conn
@@ -452,6 +1033,141 @@ fn row_to_usage_record(row: &Row) -> rusqlite::Result<UsageRecord> {
         client_id: row.get("client_id")?,
         attribution_status: str_to_attribution_status(&row.get::<_, String>("attribution_status")?),
         occurred_at: Instante(row.get("occurred_at")?),
+    })
+}
+
+fn row_to_perfil_base(row: &Row) -> rusqlite::Result<PerfilIdentidade> {
+    Ok(PerfilIdentidade {
+        id: row.get(0)?,
+        client_id: row.get(1)?,
+        project: row.get(2)?,
+        git_author_name: row.get(3)?,
+        git_author_email: row.get(4)?,
+        github_org: row.get(5)?,
+        bindings: Vec::new(), // preenchido por bindings_do_perfil()
+    })
+}
+
+fn row_to_credencial(row: &Row) -> rusqlite::Result<CredencialRegistrada> {
+    Ok(CredencialRegistrada {
+        id: row.get(0)?,
+        label: row.get(1)?,
+        keychain_service: row.get(2)?,
+        keychain_account: row.get(3)?,
+        class: str_to_classe_secret(&row.get::<_, String>(4)?),
+        created_at: Instante(row.get(5)?),
+        expires_at: row.get::<_, Option<i64>>(6)?.map(Instante),
+        last_used_at: row.get::<_, Option<i64>>(7)?.map(Instante),
+        rotation_policy: row.get(8)?,
+    })
+}
+
+fn row_to_run(row: &Row) -> rusqlite::Result<RunRegistrado> {
+    Ok(RunRegistrado {
+        id: row.get(0)?,
+        client_id: row.get(1)?,
+        project: row.get(2)?,
+        base_commit: row.get(3)?,
+        worktree_path: row.get(4)?,
+        branch: row.get(5)?,
+        provider_id: row.get(6)?,
+        pid: row.get::<_, Option<i64>>(7)?.map(|p| p as u32),
+        status: str_to_status_run(&row.get::<_, String>(8)?),
+        custo_equivalente: row.get::<_, Option<i64>>(9)?.map(Money),
+        started_at: Instante(row.get(10)?),
+        finished_at: row.get::<_, Option<i64>>(11)?.map(Instante),
+    })
+}
+
+fn status_run_to_str(s: StatusRun) -> &'static str {
+    match s {
+        StatusRun::EmExecucao => "em_execucao",
+        StatusRun::Concluido => "concluido",
+        StatusRun::Falhou => "falhou",
+        StatusRun::Abandonado => "abandonado",
+    }
+}
+
+fn str_to_status_run(s: &str) -> StatusRun {
+    match s {
+        "em_execucao" => StatusRun::EmExecucao,
+        "concluido" => StatusRun::Concluido,
+        "falhou" => StatusRun::Falhou,
+        _ => StatusRun::Abandonado,
+    }
+}
+
+fn row_to_nota(row: &Row) -> rusqlite::Result<NotaDeMemoria> {
+    Ok(NotaDeMemoria {
+        id: row.get(0)?,
+        client_id: row.get(1)?,
+        project: row.get(2)?,
+        categoria: str_to_categoria_nota(&row.get::<_, String>(3)?),
+        texto: row.get(4)?,
+        rationale: row.get(5)?,
+        created_at: Instante(row.get(6)?),
+    })
+}
+
+fn categoria_nota_to_str(c: CategoriaNota) -> &'static str {
+    match c {
+        CategoriaNota::Objetivo => "objetivo",
+        CategoriaNota::Decisao => "decisao",
+        CategoriaNota::Analise => "analise",
+        CategoriaNota::TentativaFalha => "tentativa_falha",
+        CategoriaNota::ProximoPasso => "proximo_passo",
+        CategoriaNota::Nota => "nota",
+    }
+}
+
+fn str_to_categoria_nota(s: &str) -> CategoriaNota {
+    match s {
+        "objetivo" => CategoriaNota::Objetivo,
+        "decisao" => CategoriaNota::Decisao,
+        "analise" => CategoriaNota::Analise,
+        "tentativa_falha" => CategoriaNota::TentativaFalha,
+        "proximo_passo" => CategoriaNota::ProximoPasso,
+        _ => CategoriaNota::Nota,
+    }
+}
+
+fn classe_secret_to_str(c: ClasseSecret) -> &'static str {
+    match c {
+        ClasseSecret::Low => "low",
+        ClasseSecret::Medium => "medium",
+        ClasseSecret::High => "high",
+        ClasseSecret::Critical => "critical",
+    }
+}
+
+fn str_to_classe_secret(s: &str) -> ClasseSecret {
+    match s {
+        "low" => ClasseSecret::Low,
+        "medium" => ClasseSecret::Medium,
+        "high" => ClasseSecret::High,
+        _ => ClasseSecret::Critical,
+    }
+}
+
+fn row_to_plano(row: &Row) -> rusqlite::Result<PlanoRegistrado> {
+    Ok(PlanoRegistrado {
+        provider_id: row.get("provider_id")?,
+        billing_mode: str_to_billing_mode(&row.get::<_, String>("billing_mode")?),
+        plan_label: row.get("plan_label")?,
+        ativo_desde: Instante(row.get("ativo_desde")?),
+        ativo_ate: row.get::<_, Option<i64>>("ativo_ate")?.map(Instante),
+        verificado_em: Instante(row.get("verificado_em")?),
+    })
+}
+
+fn row_to_quota_signal(row: &Row) -> rusqlite::Result<QuotaSignalRegistrado> {
+    Ok(QuotaSignalRegistrado {
+        provider_id: row.get("provider_id")?,
+        bucket_id: row.get("bucket_id")?,
+        grupo: row.get("grupo")?,
+        remaining_percent: row.get("remaining_percent")?,
+        reset_at: row.get::<_, Option<i64>>("reset_at")?.map(Instante),
+        observed_at: Instante(row.get("observed_at")?),
     })
 }
 
@@ -908,6 +1624,148 @@ mod tests {
         assert_eq!(violacoes[0].usage_record_id, "corrompido");
     }
 
+    #[test]
+    fn registrar_plano_novo_abre_vigencia() {
+        let s = store();
+        s.registrar_plano(NovoPlano {
+            provider_id: "claude".into(),
+            billing_mode: BillingMode::Subscription,
+            plan_label: Some("pro".into()),
+            detectado_em: Instante(100),
+        })
+        .unwrap();
+
+        let vigente = s.plano_vigente("claude").unwrap().unwrap();
+        assert_eq!(vigente.plan_label.as_deref(), Some("pro"));
+        assert_eq!(vigente.ativo_desde, Instante(100));
+        assert_eq!(vigente.ativo_ate, None);
+    }
+
+    #[test]
+    fn registrar_plano_igual_ao_vigente_e_no_op() {
+        let s = store();
+        s.registrar_plano(NovoPlano {
+            provider_id: "claude".into(),
+            billing_mode: BillingMode::Subscription,
+            plan_label: Some("pro".into()),
+            detectado_em: Instante(100),
+        })
+        .unwrap();
+        s.registrar_plano(NovoPlano {
+            provider_id: "claude".into(),
+            billing_mode: BillingMode::Subscription,
+            plan_label: Some("pro".into()),
+            detectado_em: Instante(200),
+        })
+        .unwrap();
+
+        let vigente = s.plano_vigente("claude").unwrap().unwrap();
+        assert_eq!(
+            vigente.ativo_desde,
+            Instante(100),
+            "plano relatado igual ao vigente não deve abrir nova vigência"
+        );
+        assert_eq!(
+            vigente.verificado_em,
+            Instante(200),
+            "spec plan-catalog 'Consulta de plano falha': verificado_em avança a cada \
+             checagem bem-sucedida mesmo sem mudança, para sinalizar informação \
+             potencialmente desatualizada quando parar de avançar"
+        );
+    }
+
+    #[test]
+    fn registrar_plano_diferente_fecha_anterior_e_abre_novo() {
+        let s = store();
+        s.registrar_plano(NovoPlano {
+            provider_id: "claude".into(),
+            billing_mode: BillingMode::Subscription,
+            plan_label: Some("pro".into()),
+            detectado_em: Instante(100),
+        })
+        .unwrap();
+        s.registrar_plano(NovoPlano {
+            provider_id: "claude".into(),
+            billing_mode: BillingMode::Subscription,
+            plan_label: Some("max".into()),
+            detectado_em: Instante(200),
+        })
+        .unwrap();
+
+        let vigente = s.plano_vigente("claude").unwrap().unwrap();
+        assert_eq!(vigente.plan_label.as_deref(), Some("max"));
+        assert_eq!(vigente.ativo_desde, Instante(200));
+
+        let historico = s
+            .plano_vigente_em("claude", Instante(150))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            historico.plan_label.as_deref(),
+            Some("pro"),
+            "janela histórica usa o plano vigente à época"
+        );
+    }
+
+    #[test]
+    fn plano_vigente_de_provider_sem_plano_e_none() {
+        let s = store();
+        assert_eq!(s.plano_vigente("grok").unwrap(), None);
+    }
+
+    #[test]
+    fn upsert_quota_signal_atualiza_o_mesmo_bucket() {
+        let s = store();
+        s.upsert_quota_signal(NovoQuotaSignal {
+            provider_id: "gemini".into(),
+            bucket_id: "gemini-weekly".into(),
+            grupo: "Gemini Models".into(),
+            remaining_percent: 92.0,
+            reset_at: Some(Instante(1000)),
+            observed_at: Instante(500),
+        })
+        .unwrap();
+        s.upsert_quota_signal(NovoQuotaSignal {
+            provider_id: "gemini".into(),
+            bucket_id: "gemini-weekly".into(),
+            grupo: "Gemini Models".into(),
+            remaining_percent: 80.0,
+            reset_at: Some(Instante(1000)),
+            observed_at: Instante(600),
+        })
+        .unwrap();
+
+        let sinais = s.quota_signals("gemini").unwrap();
+        assert_eq!(sinais.len(), 1, "upsert por bucket não duplica");
+        assert_eq!(sinais[0].remaining_percent, 80.0);
+    }
+
+    #[test]
+    fn quota_signals_lista_multiplos_buckets_do_mesmo_provider() {
+        let s = store();
+        s.upsert_quota_signal(NovoQuotaSignal {
+            provider_id: "codex".into(),
+            bucket_id: "primary".into(),
+            grupo: "rate_limits".into(),
+            remaining_percent: 75.0,
+            reset_at: None,
+            observed_at: Instante(1),
+        })
+        .unwrap();
+        s.upsert_quota_signal(NovoQuotaSignal {
+            provider_id: "codex".into(),
+            bucket_id: "secondary".into(),
+            grupo: "rate_limits".into(),
+            remaining_percent: 50.0,
+            reset_at: None,
+            observed_at: Instante(1),
+        })
+        .unwrap();
+
+        let sinais = s.quota_signals("codex").unwrap();
+        assert_eq!(sinais.len(), 2);
+    }
+
     /// Task 8.3 — volume sintético para o critério de revisão do D-1
     /// ("revisão se uma consulta real passar de 200ms com doze meses de
     /// dados"). O blueprint não fixa uma contagem exata; 200 mil registros
@@ -1042,5 +1900,454 @@ mod tests {
         println!(
             "  ^ acima de 200ms é esperado aqui ({duracao_sem_recorte:?}) -- ver comentário no teste"
         );
+    }
+
+    // --- Identidade (context-and-identity-switching) ----------------------
+
+    fn novo_perfil(id: &str, client_id: &str, project: Option<&str>) -> NovoPerfil {
+        NovoPerfil {
+            id: id.into(),
+            client_id: client_id.into(),
+            project: project.map(String::from),
+            git_author_name: Some("Joao Costa".into()),
+            git_author_email: Some("joao@xpto.com.br".into()),
+            github_org: Some("xpto-org".into()),
+            bindings: vec![ProviderBinding {
+                provider_id: "codex".into(),
+                config_home: "/tmp/xpto/codex".into(),
+            }],
+            created_at: Instante(1000),
+        }
+    }
+
+    #[test]
+    fn criar_perfil_e_le_de_volta_com_bindings() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.criar_perfil(novo_perfil("prof1", "xpto", Some("checkout-api")))
+            .unwrap();
+
+        let perfil = s.perfil("prof1").unwrap().unwrap();
+        assert_eq!(perfil.client_id, "xpto");
+        assert_eq!(perfil.project.as_deref(), Some("checkout-api"));
+        assert_eq!(perfil.bindings.len(), 1);
+        assert_eq!(perfil.bindings[0].provider_id, "codex");
+    }
+
+    #[test]
+    fn perfil_com_multiplos_providers_tem_caminhos_isolados_e_distintos() {
+        // Spec provider-isolation, "Perfil com múltiplos providers
+        // vinculados": cada provider tem seu próprio caminho, sem colisão.
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        let mut perfil = novo_perfil("prof1", "xpto", None);
+        perfil.bindings = vec![
+            ProviderBinding {
+                provider_id: "codex".into(),
+                config_home: "/tmp/xpto/codex".into(),
+            },
+            ProviderBinding {
+                provider_id: "claude".into(),
+                config_home: "/tmp/xpto/claude".into(),
+            },
+        ];
+        s.criar_perfil(perfil).unwrap();
+
+        let de_volta = s.perfil("prof1").unwrap().unwrap();
+        assert_eq!(de_volta.bindings.len(), 2);
+        let caminhos: std::collections::HashSet<&str> = de_volta
+            .bindings
+            .iter()
+            .map(|b| b.config_home.as_str())
+            .collect();
+        assert_eq!(
+            caminhos.len(),
+            2,
+            "caminhos de provider distintos não colidem"
+        );
+    }
+
+    #[test]
+    fn perfil_inexistente_e_none() {
+        let s = store();
+        assert_eq!(s.perfil("fantasma").unwrap(), None);
+    }
+
+    #[test]
+    fn perfis_do_cliente_lista_todos_com_bindings() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.criar_perfil(novo_perfil("prof1", "xpto", Some("checkout-api")))
+            .unwrap();
+        s.criar_perfil(novo_perfil("prof2", "xpto", Some("billing-api")))
+            .unwrap();
+
+        let perfis = s.perfis_do_cliente("xpto").unwrap();
+        assert_eq!(
+            perfis.len(),
+            2,
+            "múltiplos projetos = ambiguidade pra quem chama decidir"
+        );
+        assert!(perfis.iter().all(|p| !p.bindings.is_empty()));
+    }
+
+    #[test]
+    fn conectar_e_desconectar_contexto() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.criar_perfil(novo_perfil("prof1", "xpto", None)).unwrap();
+
+        assert_eq!(s.contexto_ativo().unwrap(), None);
+
+        s.conectar(ContextoAtivo {
+            client_id: "xpto".into(),
+            project: None,
+            identity_profile_id: "prof1".into(),
+            connected_at: Instante(5000),
+        })
+        .unwrap();
+
+        let ativo = s.contexto_ativo().unwrap().unwrap();
+        assert_eq!(ativo.client_id, "xpto");
+        assert_eq!(ativo.identity_profile_id, "prof1");
+
+        s.desconectar().unwrap();
+        assert_eq!(s.contexto_ativo().unwrap(), None);
+    }
+
+    #[test]
+    fn desconectar_sem_contexto_ativo_e_no_op() {
+        let s = store();
+        s.desconectar().unwrap(); // não deve falhar
+        assert_eq!(s.contexto_ativo().unwrap(), None);
+    }
+
+    #[test]
+    fn conectar_substitui_contexto_anterior() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.upsert_client("acme").unwrap();
+        s.criar_perfil(novo_perfil("prof-xpto", "xpto", None))
+            .unwrap();
+        s.criar_perfil(novo_perfil("prof-acme", "acme", None))
+            .unwrap();
+
+        s.conectar(ContextoAtivo {
+            client_id: "xpto".into(),
+            project: None,
+            identity_profile_id: "prof-xpto".into(),
+            connected_at: Instante(1),
+        })
+        .unwrap();
+        s.conectar(ContextoAtivo {
+            client_id: "acme".into(),
+            project: None,
+            identity_profile_id: "prof-acme".into(),
+            connected_at: Instante(2),
+        })
+        .unwrap();
+
+        let ativo = s.contexto_ativo().unwrap().unwrap();
+        assert_eq!(
+            ativo.client_id, "acme",
+            "troca de contexto substitui o anterior, não acumula (singleton)"
+        );
+    }
+
+    fn nova_credencial(id: &str, class: ClasseSecret) -> NovaCredencialMetadados {
+        NovaCredencialMetadados {
+            id: id.into(),
+            label: "AWS produção".into(),
+            keychain_service: "brian".into(),
+            keychain_account: format!("xpto/{id}"),
+            class,
+            created_at: Instante(1000),
+            expires_at: None,
+            rotation_policy: Some("90d".into()),
+        }
+    }
+
+    #[test]
+    fn registrar_credencial_grava_so_metadados() {
+        let s = store();
+        let cred = s
+            .registrar_credencial(nova_credencial("c1", ClasseSecret::Critical))
+            .unwrap();
+        assert_eq!(cred.class, ClasseSecret::Critical);
+        assert_eq!(cred.last_used_at, None);
+
+        let de_volta = s.credencial("c1").unwrap().unwrap();
+        assert_eq!(de_volta, cred);
+    }
+
+    #[test]
+    fn atualizar_ultimo_uso_credencial_registra_instante() {
+        let s = store();
+        s.registrar_credencial(nova_credencial("c1", ClasseSecret::Low))
+            .unwrap();
+        s.atualizar_ultimo_uso_credencial("c1", Instante(5000))
+            .unwrap();
+
+        let cred = s.credencial("c1").unwrap().unwrap();
+        assert_eq!(cred.last_used_at, Some(Instante(5000)));
+    }
+
+    #[test]
+    fn atualizar_ultimo_uso_de_credencial_inexistente_e_notfound() {
+        let s = store();
+        let err = s
+            .atualizar_ultimo_uso_credencial("fantasma", Instante(1))
+            .unwrap_err();
+        assert!(matches!(err, StorageError::NotFound(_)));
+    }
+
+    #[test]
+    fn listar_credenciais_traz_todas() {
+        let s = store();
+        s.registrar_credencial(nova_credencial("c1", ClasseSecret::Low))
+            .unwrap();
+        s.registrar_credencial(nova_credencial("c2", ClasseSecret::High))
+            .unwrap();
+        assert_eq!(s.listar_credenciais().unwrap().len(), 2);
+    }
+
+    // --- Notas de memória (continuity-pack-handoff) ------------------------
+
+    fn nova_nota(id: &str, client_id: &str, categoria: CategoriaNota) -> NovaNota {
+        NovaNota {
+            id: id.into(),
+            client_id: client_id.into(),
+            project: Some("checkout-api".into()),
+            categoria,
+            texto: "texto de teste".into(),
+            rationale: None,
+            created_at: Instante(1000),
+        }
+    }
+
+    #[test]
+    fn registrar_nota_e_le_de_volta() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.registrar_nota(nova_nota("n1", "xpto", CategoriaNota::Nota))
+            .unwrap();
+
+        let notas = s.notas_do_contexto("xpto", Some("checkout-api")).unwrap();
+        assert_eq!(notas.len(), 1);
+        assert_eq!(notas[0].texto, "texto de teste");
+    }
+
+    #[test]
+    fn registrar_decisao_sem_rationale_e_invalid() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        let err = s
+            .registrar_nota(nova_nota("n1", "xpto", CategoriaNota::Decisao))
+            .unwrap_err();
+        assert!(matches!(err, StorageError::Invalid(_)));
+    }
+
+    #[test]
+    fn registrar_decisao_com_rationale_funciona() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        let mut nota = nova_nota("n1", "xpto", CategoriaNota::Decisao);
+        nota.rationale = Some("porque sim".into());
+        let gravada = s.registrar_nota(nota).unwrap();
+        assert_eq!(gravada.rationale.as_deref(), Some("porque sim"));
+    }
+
+    #[test]
+    fn notas_de_um_cliente_nao_vazam_para_outro() {
+        // Spec memory-notes, "Isolamento entre Contexts por construção".
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.upsert_client("acme").unwrap();
+        s.registrar_nota(nova_nota("n1", "xpto", CategoriaNota::Nota))
+            .unwrap();
+        s.registrar_nota(nova_nota("n2", "acme", CategoriaNota::Nota))
+            .unwrap();
+
+        let de_xpto = s.notas_do_contexto("xpto", Some("checkout-api")).unwrap();
+        assert_eq!(de_xpto.len(), 1);
+        assert_eq!(de_xpto[0].client_id, "xpto");
+    }
+
+    #[test]
+    fn notas_escopadas_por_project_none_nao_misturam_com_project_setado() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.registrar_nota(nova_nota("n1", "xpto", CategoriaNota::Nota))
+            .unwrap(); // project = Some("checkout-api")
+        let mut sem_projeto = nova_nota("n2", "xpto", CategoriaNota::Nota);
+        sem_projeto.project = None;
+        s.registrar_nota(sem_projeto).unwrap();
+
+        let com_projeto = s.notas_do_contexto("xpto", Some("checkout-api")).unwrap();
+        assert_eq!(com_projeto.len(), 1);
+        let sem_projeto = s.notas_do_contexto("xpto", None).unwrap();
+        assert_eq!(sem_projeto.len(), 1);
+    }
+
+    #[test]
+    fn duas_notas_coexistem_append_only() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        let mut n1 = nova_nota("n1", "xpto", CategoriaNota::Analise);
+        n1.texto = "primeira análise".into();
+        s.registrar_nota(n1).unwrap();
+        let mut n2 = nova_nota("n2", "xpto", CategoriaNota::Analise);
+        n2.texto = "análise corrigida".into();
+        s.registrar_nota(n2).unwrap();
+
+        let notas = s.notas_do_contexto("xpto", Some("checkout-api")).unwrap();
+        assert_eq!(notas.len(), 2, "ambas permanecem, nenhuma é sobrescrita");
+    }
+
+    // --- Run (isolated-tracked-run) -----------------------------------------
+
+    fn novo_run(id: &str) -> NovoRun {
+        NovoRun {
+            id: id.into(),
+            client_id: "xpto".into(),
+            project: Some("checkout-api".into()),
+            base_commit: "abc123".into(),
+            worktree_path: format!("/tmp/brian-worktrees/{id}"),
+            branch: format!("brian/{id}"),
+            provider_id: "codex".into(),
+            started_at: Instante(1000),
+        }
+    }
+
+    #[test]
+    fn criar_run_e_le_de_volta() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.criar_run(novo_run("run1")).unwrap();
+
+        let run = s.run("run1").unwrap().unwrap();
+        assert_eq!(run.status, StatusRun::EmExecucao);
+        assert_eq!(run.pid, None, "pid ausente até o processo existir");
+        assert_eq!(run.finished_at, None);
+    }
+
+    #[test]
+    fn run_inexistente_e_none() {
+        let s = store();
+        assert_eq!(s.run("fantasma").unwrap(), None);
+    }
+
+    #[test]
+    fn definir_pid_run_atualiza_o_registro() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.criar_run(novo_run("run1")).unwrap();
+        s.definir_pid_run("run1", 4242).unwrap();
+
+        let run = s.run("run1").unwrap().unwrap();
+        assert_eq!(run.pid, Some(4242));
+    }
+
+    #[test]
+    fn definir_pid_de_run_inexistente_e_notfound() {
+        let s = store();
+        let err = s.definir_pid_run("fantasma", 1).unwrap_err();
+        assert!(matches!(err, StorageError::NotFound(_)));
+    }
+
+    #[test]
+    fn definir_worktree_run_atualiza_o_registro() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.criar_run(novo_run("run1")).unwrap();
+        s.definir_worktree_run("run1", "/tmp/worktrees/run1", "brian/run_run1")
+            .unwrap();
+
+        let run = s.run("run1").unwrap().unwrap();
+        assert_eq!(run.worktree_path, "/tmp/worktrees/run1");
+        assert_eq!(run.branch, "brian/run_run1");
+    }
+
+    #[test]
+    fn definir_worktree_de_run_inexistente_e_notfound() {
+        let s = store();
+        let err = s
+            .definir_worktree_run("fantasma", "/tmp/x", "b")
+            .unwrap_err();
+        assert!(matches!(err, StorageError::NotFound(_)));
+    }
+
+    #[test]
+    fn atualizar_status_run_registra_conclusao() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.criar_run(novo_run("run1")).unwrap();
+        s.atualizar_status_run(
+            "run1",
+            StatusRun::Concluido,
+            Some(Instante(2000)),
+            Some(Money(1_500_000)),
+        )
+        .unwrap();
+
+        let run = s.run("run1").unwrap().unwrap();
+        assert_eq!(run.status, StatusRun::Concluido);
+        assert_eq!(run.finished_at, Some(Instante(2000)));
+        assert_eq!(run.custo_equivalente, Some(Money(1_500_000)));
+    }
+
+    #[test]
+    fn runs_em_execucao_lista_so_os_nao_finalizados() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.criar_run(novo_run("run1")).unwrap();
+        s.criar_run(novo_run("run2")).unwrap();
+        s.atualizar_status_run("run2", StatusRun::Concluido, Some(Instante(2000)), None)
+            .unwrap();
+
+        let em_execucao = s.runs_em_execucao().unwrap();
+        assert_eq!(em_execucao.len(), 1);
+        assert_eq!(em_execucao[0].id, "run1");
+    }
+
+    #[test]
+    fn runs_abandonados_lista_so_os_abandonados() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.criar_run(novo_run("run1")).unwrap();
+        s.criar_run(novo_run("run2")).unwrap();
+        s.atualizar_status_run("run2", StatusRun::Abandonado, Some(Instante(2000)), None)
+            .unwrap();
+
+        let abandonados = s.runs_abandonados().unwrap();
+        assert_eq!(abandonados.len(), 1);
+        assert_eq!(abandonados[0].id, "run2");
+    }
+
+    #[test]
+    fn registrar_e_listar_eventos_do_run() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.criar_run(novo_run("run1")).unwrap();
+        s.registrar_evento_run(NovoEvento {
+            id: "e1".into(),
+            run_id: "run1".into(),
+            tipo: "worktree.create".into(),
+            detalhe: None,
+            ocorrido_em: Instante(1000),
+        })
+        .unwrap();
+        s.registrar_evento_run(NovoEvento {
+            id: "e2".into(),
+            run_id: "run1".into(),
+            tipo: "provider.execute".into(),
+            detalhe: Some("codex".into()),
+            ocorrido_em: Instante(1001),
+        })
+        .unwrap();
+
+        let eventos = s.eventos_do_run("run1").unwrap();
+        assert_eq!(eventos.len(), 2);
+        assert_eq!(eventos[0].tipo, "worktree.create");
     }
 }

@@ -4,9 +4,17 @@
 //! parte fina que só conecta ao `Store` — testável sem banco (mesmo padrão
 //! usado nos adapters).
 
-use crate::domain::{CostSource, Money, UsageRecord};
+use crate::capacidade::{self, ColetorDeCapacidade, montar_janela, providers_sem_fonte};
+use crate::continuidade;
+use crate::domain::{
+    BillingMode, CategoriaNota, CostSource, FonteCapacidade, Instante, JanelaDeCapacidade, Money,
+    RunRegistrado, TipoJanela, UsageRecord,
+};
+use crate::execucao;
+use crate::identidade;
 use crate::importacao::{ColetorDeUso, importar};
-use crate::storage::{Periodo, Store};
+use crate::router;
+use crate::storage::{NovoPerfil, Periodo, Store};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -47,6 +55,148 @@ pub enum Comando {
         unattributed: bool,
         #[arg(long)]
         export: Option<PathBuf>,
+    },
+    /// Importa plano e sinais de quota dos providers com fonte própria.
+    ImportCapacity,
+    /// Consulta capacidade por provider: plano, janela, %, restante, reset, burn.
+    Capacity {
+        #[arg(long)]
+        provider: Option<String>,
+    },
+    /// Gerencia planos detectados.
+    #[command(subcommand)]
+    Plans(ComandoPlans),
+    /// Ativa cliente/projeto: identidade Git, isolamento de provider,
+    /// namespace de memória. Imprime `export` para `eval` no shell.
+    Connect {
+        /// `<cliente>` ou `<cliente>/<projeto>`.
+        alvo: String,
+    },
+    /// Encerra o contexto ativo. Imprime `unset` para `eval` no shell.
+    Disconnect,
+    /// Contexto ativo: cliente, projeto, identidade Git e, por provider, a
+    /// conta autenticada.
+    Whoami,
+    /// Gerencia perfis de identidade (cliente/projeto/provider bindings).
+    #[command(subcommand)]
+    Context(ComandoContext),
+    /// Gerencia credenciais do Vault (metadados — nunca o valor).
+    #[command(subcommand)]
+    Vault(ComandoVault),
+    /// Gerencia notas de memória do Context ativo.
+    #[command(subcommand)]
+    Memory(ComandoMemory),
+    /// Mostra o Continuity Pack do Context ativo, sem handoff.
+    Continuity,
+    /// Monta e apresenta o Continuity Pack para o próximo provider.
+    Handoff {
+        #[arg(long = "to")]
+        provider: String,
+    },
+    /// Executa uma tarefa num worktree isolado (D-7), rastreando o run.
+    Run {
+        tarefa: String,
+        /// Vence qualquer regra de `routing/rules.json` (blueprint §11.5).
+        /// Sem isso, o provider é decidido por regra.
+        #[arg(long)]
+        provider: Option<String>,
+        #[arg(long)]
+        model: Option<String>,
+        /// Comando shell rodado no worktree após o provider — só conclui o
+        /// run se sair com sucesso.
+        #[arg(long)]
+        gate: Option<String>,
+        /// Mostra qual provider seria escolhido e por quê, sem criar
+        /// worktree nem invocar provider nenhum.
+        #[arg(long)]
+        explain_only: bool,
+    },
+    /// Lista runs órfãos e finaliza (nunca reexecuta) — `--run <id>` ou `--all`.
+    Recover {
+        #[arg(long)]
+        run: Option<String>,
+        #[arg(long)]
+        all: bool,
+    },
+    /// Gerencia worktrees de runs.
+    #[command(subcommand)]
+    Worktree(ComandoWorktree),
+    /// Harness de eval (pré-requisito de D-13).
+    #[command(subcommand)]
+    Eval(ComandoEval),
+}
+
+#[derive(Subcommand)]
+pub enum ComandoWorktree {
+    /// Worktrees de runs ativos ou abandonados, com status do run associado.
+    List,
+}
+
+#[derive(Subcommand)]
+pub enum ComandoEval {
+    /// Roda casos de eval (3 tentativas cada) e reporta taxa de sucesso.
+    Run {
+        #[arg(long)]
+        case: Option<String>,
+        #[arg(long, default_value = "evals/cases")]
+        dir: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ComandoMemory {
+    /// Registra uma nota simples.
+    Note { texto: String },
+    /// Registra uma decisão com o motivo.
+    Decide {
+        texto: String,
+        #[arg(long)]
+        why: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ComandoContext {
+    /// Lista os perfis de identidade de um cliente.
+    List {
+        #[arg(long)]
+        client: String,
+    },
+    /// Mostra um perfil por id.
+    Show { id: String },
+    /// Cria um perfil de identidade para cliente/projeto.
+    Init {
+        #[arg(long)]
+        client: String,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long)]
+        git_name: Option<String>,
+        #[arg(long)]
+        git_email: Option<String>,
+        #[arg(long)]
+        github_org: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ComandoVault {
+    /// Metadados de credenciais registradas — nunca o valor.
+    List,
+}
+
+#[derive(Subcommand)]
+pub enum ComandoPlans {
+    /// Lista o plano vigente de cada provider (leitura — detecção é automática).
+    List,
+    /// Rateio de capacidade do plano entre clientes (showback em fração, sem
+    /// custo em dólar — nenhuma fonte desta change expõe o preço do plano).
+    Allocation {
+        #[arg(long)]
+        provider: String,
+        /// Recorte `AAAA-MM`. Padrão: mês corrente.
+        #[arg(long)]
+        period: Option<String>,
     },
 }
 
@@ -118,6 +268,15 @@ fn periodo_aberto() -> Periodo {
         desde: crate::domain::Instante(i64::MIN),
         ate: None,
     }
+}
+
+/// Mês corrente como `Periodo` — padrão de `brian plans allocation` quando
+/// `--period` não é informado.
+fn periodo_mes_atual() -> Periodo {
+    let agora = Instante::agora();
+    let dias = agora.0.div_euclid(86_400);
+    let (y, mo, _d) = data_civil_de_dias(dias);
+    periodo_do_mes(&format!("{y:04}-{mo:02}")).expect("mês corrente é sempre um período válido")
 }
 
 fn fmt_opt_money(m: Option<Money>) -> String {
@@ -408,6 +567,660 @@ pub fn executar_costs(
     }
 
     Err("informe --client, --by, --unattributed ou --export".to_string())
+}
+
+// --- Capacidade (grupos 8/9) --------------------------------------------
+
+fn fmt_opt_percent(p: Option<f64>) -> String {
+    match p {
+        Some(v) => format!("{v:.1}%"),
+        None => "—".to_string(),
+    }
+}
+
+/// Soma tokens conhecidos de um provider num recorte de tempo. Filtro por
+/// provider em Rust, não em SQL: `Store` não tem consulta escopada por
+/// provider+período além da lista completa do período (mesmo caminho que
+/// `--by provider` já usa em `executar_costs`).
+fn somar_tokens_provider(
+    store: &dyn Store,
+    provider_id: &str,
+    desde: Instante,
+    ate: Instante,
+) -> Result<u64, String> {
+    let registros = store
+        .consumo_no_periodo(Periodo {
+            desde,
+            ate: Some(ate),
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(registros
+        .iter()
+        .filter(|r| r.provider_id == provider_id)
+        .map(|r| r.tokens.total_conhecido())
+        .sum())
+}
+
+fn formatar_linha_janela(j: &JanelaDeCapacidade, plano_label: &str) -> String {
+    let fonte = match j.fonte {
+        FonteCapacidade::Provider => "provider",
+        FonteCapacidade::BrianMeasured => "brian_measured",
+    };
+    format!(
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        j.provider_id,
+        j.bucket_id,
+        plano_label,
+        fonte,
+        j.consumido_tokens
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| "—".to_string()),
+        fmt_opt_percent(j.used_percent),
+        fmt_opt_percent(j.remaining_percent),
+        j.resets_at
+            .map(formatar_instante)
+            .unwrap_or_else(|| "—".to_string()),
+        j.burn_tokens_por_hora
+            .map(|b| format!("{b:.1}"))
+            .unwrap_or_else(|| "—".to_string()),
+        // Sempre "—" nesta change: nenhuma fonte dá capacidade em tokens
+        // absolutos, só percentual (spec capacity-windows, requirement
+        // "Burn rate e projeção de esgotamento"). Campo existe para o dia em
+        // que uma fonte passar a dar.
+        j.eta_esgotamento
+            .map(formatar_instante)
+            .unwrap_or_else(|| "—".to_string()),
+    )
+}
+
+pub fn executar_import_capacity(
+    store: &dyn Store,
+    coletores: &[Box<dyn ColetorDeCapacidade>],
+) -> Result<String, String> {
+    let agora = Instante::agora();
+    let resultados =
+        capacidade::importar_capacidade(store, coletores, agora).map_err(|e| e.to_string())?;
+    let mut linhas = vec!["provider\terro".to_string()];
+    for r in &resultados {
+        linhas.push(format!(
+            "{}\t{}",
+            r.provider_id,
+            r.erro.as_deref().unwrap_or("—")
+        ));
+    }
+    Ok(linhas.join("\n"))
+}
+
+pub fn executar_capacity(store: &dyn Store, provider: Option<String>) -> Result<String, String> {
+    let agora = Instante::agora();
+    let providers: Vec<String> = match &provider {
+        Some(p) => vec![p.clone()],
+        None => capacidade::PROVIDERS_VERIFICADOS
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+    };
+
+    let mut linhas = vec![
+        "provider\tbucket\tplano\tfonte\tconsumido_tokens\tused_percent\trestante_percent\treset\tburn_tokens_hora\teta_esgotamento"
+            .to_string(),
+    ];
+
+    for provider_id in &providers {
+        let plano = store
+            .plano_vigente(provider_id)
+            .map_err(|e| e.to_string())?;
+        let plano_label = plano
+            .as_ref()
+            .and_then(|p| p.plan_label.clone())
+            .unwrap_or_else(|| "—".to_string());
+
+        let sinais = store
+            .quota_signals(provider_id)
+            .map_err(|e| e.to_string())?;
+
+        let consumido_semana =
+            somar_tokens_provider(store, provider_id, Instante(agora.0 - 7 * 86_400), agora)?;
+        let consumido_24h =
+            somar_tokens_provider(store, provider_id, Instante(agora.0 - 86_400), agora)?;
+        let burn = capacidade::calcular_burn(consumido_24h, 86_400);
+
+        if sinais.is_empty() {
+            let j = montar_janela(
+                provider_id,
+                TipoJanela::Semana,
+                Some(consumido_semana),
+                None,
+                burn,
+                agora,
+            );
+            linhas.push(formatar_linha_janela(&j, &plano_label));
+        } else {
+            for s in &sinais {
+                let j = montar_janela(
+                    provider_id,
+                    TipoJanela::Semana,
+                    Some(consumido_semana),
+                    Some(s),
+                    burn,
+                    agora,
+                );
+                linhas.push(formatar_linha_janela(&j, &plano_label));
+            }
+        }
+    }
+
+    // Provider sem fonte só aparece quando não há filtro específico — pedir
+    // um provider por nome que não tem fonte é o operador escolhendo,
+    // continua útil informar "sem fonte" ali também.
+    if provider.is_none() {
+        for excluido in providers_sem_fonte() {
+            linhas.push(format!(
+                "{}\t—\tsem fonte\t—\t—\t—\t—\t—\t—\t—",
+                excluido.provider_id
+            ));
+        }
+    } else if let Some(p) = &provider
+        && let Some(excluido) = providers_sem_fonte()
+            .into_iter()
+            .find(|e| e.provider_id == p.as_str())
+    {
+        linhas.push(format!(
+            "{}\t—\tsem fonte\t—\t—\t—\t—\t—\t—\t—",
+            excluido.provider_id
+        ));
+    }
+
+    Ok(linhas.join("\n"))
+}
+
+pub fn executar_plans_list(store: &dyn Store) -> Result<String, String> {
+    let mut linhas = vec!["provider\tbilling_mode\tplano\tativo_desde\tverificado_em".to_string()];
+
+    for provider_id in capacidade::PROVIDERS_VERIFICADOS {
+        match store
+            .plano_vigente(provider_id)
+            .map_err(|e| e.to_string())?
+        {
+            Some(p) => linhas.push(format!(
+                "{}\t{:?}\t{}\t{}\t{}",
+                provider_id,
+                p.billing_mode,
+                p.plan_label.as_deref().unwrap_or("—"),
+                formatar_instante(p.ativo_desde),
+                formatar_instante(p.verificado_em),
+            )),
+            None => linhas.push(format!("{provider_id}\t—\tsem plano detectado\t—\t—")),
+        }
+    }
+
+    for excluido in providers_sem_fonte() {
+        linhas.push(format!("{}\t—\tsem fonte\t—\t—", excluido.provider_id));
+    }
+
+    Ok(linhas.join("\n"))
+}
+
+pub fn executar_plans_allocation(
+    store: &dyn Store,
+    provider: &str,
+    period: Option<String>,
+) -> Result<String, String> {
+    let Some(plano) = store.plano_vigente(provider).map_err(|e| e.to_string())? else {
+        return Ok(format!("sem plano detectado para '{provider}'"));
+    };
+    if plano.billing_mode != BillingMode::Subscription {
+        return Ok(format!(
+            "rateio não se aplica — billing_mode de '{provider}' é {:?}, não subscription",
+            plano.billing_mode
+        ));
+    }
+
+    let periodo = match &period {
+        Some(p) => periodo_do_mes(p).ok_or_else(|| format!("período inválido: {p}"))?,
+        None => periodo_mes_atual(),
+    };
+
+    let registros: Vec<_> = store
+        .consumo_no_periodo(periodo)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|r| r.provider_id == provider)
+        .collect();
+
+    let mut tokens_por_cliente: Vec<(String, u64)> = Vec::new();
+    let mut tokens_nao_atribuidos = 0u64;
+    for r in &registros {
+        let tokens = r.tokens.total_conhecido();
+        match &r.client_id {
+            Some(cliente) => match tokens_por_cliente.iter_mut().find(|(c, _)| c == cliente) {
+                Some(entrada) => entrada.1 += tokens,
+                None => tokens_por_cliente.push((cliente.clone(), tokens)),
+            },
+            None => tokens_nao_atribuidos += tokens,
+        }
+    }
+
+    let rateio = capacidade::calcular_rateio(&tokens_por_cliente, tokens_nao_atribuidos);
+
+    let mut linhas = vec!["client\tfracao_do_plano".to_string()];
+    for (cliente, fracao) in &rateio.por_cliente {
+        linhas.push(format!("{cliente}\t{:.1}%", fracao * 100.0));
+    }
+    linhas.push(format!(
+        "não_atribuído (tokens, fora do rateio)\t{}",
+        rateio.tokens_nao_atribuidos
+    ));
+
+    Ok(linhas.join("\n"))
+}
+
+// --- Identidade e contexto (grupos 5-6) ---------------------------------
+
+pub fn executar_connect(store: &dyn Store, alvo: &str) -> Result<String, String> {
+    let (client, project) = match alvo.split_once('/') {
+        Some((c, p)) => (c, Some(p)),
+        None => (alvo, None),
+    };
+
+    let ctx = identidade::conectar(store, client, project, Instante::agora())
+        .map_err(|e| e.to_string())?;
+
+    let perfil = store
+        .perfil(&ctx.identity_profile_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "perfil não encontrado após conectar".to_string())?;
+
+    Ok(identidade::linhas_export(&perfil).join("\n"))
+}
+
+pub fn executar_disconnect(store: &dyn Store) -> Result<String, String> {
+    let Some(ctx) = store.contexto_ativo().map_err(|e| e.to_string())? else {
+        return Ok(String::new()); // no-op: nada para desconectar
+    };
+    let perfil = store
+        .perfil(&ctx.identity_profile_id)
+        .map_err(|e| e.to_string())?;
+    identidade::desconectar(store).map_err(|e| e.to_string())?;
+
+    match perfil {
+        Some(p) => Ok(identidade::linhas_unset(&p).join("\n")),
+        None => Ok(String::new()),
+    }
+}
+
+pub fn executar_whoami(
+    store: &dyn Store,
+    coletores: &[Box<dyn ColetorDeCapacidade>],
+) -> Result<String, String> {
+    let Some(ctx) = store.contexto_ativo().map_err(|e| e.to_string())? else {
+        return Ok("nenhum contexto ativo".to_string());
+    };
+    let perfil = store
+        .perfil(&ctx.identity_profile_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "perfil do contexto ativo não encontrado".to_string())?;
+
+    let mut linhas = vec![
+        format!("cliente: {}", ctx.client_id),
+        format!("projeto: {}", ctx.project.as_deref().unwrap_or("—")),
+        format!("perfil: {}", perfil.id),
+    ];
+    if let (Some(nome), Some(email)) = (&perfil.git_author_name, &perfil.git_author_email) {
+        linhas.push(format!("git: {nome} <{email}>"));
+    }
+    if let Some(org) = &perfil.github_org {
+        linhas.push(format!("github: {org}"));
+    }
+    linhas.push(String::new());
+    linhas.push("provider\tstatus\tconta".to_string());
+    for coletor in coletores {
+        match coletor.consultar() {
+            Ok((plano, _)) => linhas.push(format!(
+                "{}\tautenticado\t{}",
+                coletor.provider_id(),
+                plano.account_email.as_deref().unwrap_or("desconhecida")
+            )),
+            Err(_) => linhas.push(format!("{}\tnão autenticado\t—", coletor.provider_id())),
+        }
+    }
+
+    Ok(linhas.join("\n"))
+}
+
+pub fn executar_context_list(store: &dyn Store, client: &str) -> Result<String, String> {
+    let perfis = store.perfis_do_cliente(client).map_err(|e| e.to_string())?;
+    if perfis.is_empty() {
+        return Ok(format!("nenhum perfil configurado para '{client}'"));
+    }
+    let mut linhas = vec!["id\tprojeto\tproviders".to_string()];
+    for p in &perfis {
+        linhas.push(format!(
+            "{}\t{}\t{}",
+            p.id,
+            p.project.as_deref().unwrap_or("—"),
+            p.bindings
+                .iter()
+                .map(|b| b.provider_id.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        ));
+    }
+    Ok(linhas.join("\n"))
+}
+
+pub fn executar_context_show(store: &dyn Store, id: &str) -> Result<String, String> {
+    match store.perfil(id).map_err(|e| e.to_string())? {
+        None => Ok(format!("perfil '{id}' não existe")),
+        Some(p) => {
+            let mut linhas = vec![
+                format!("id: {}", p.id),
+                format!("cliente: {}", p.client_id),
+                format!("projeto: {}", p.project.as_deref().unwrap_or("—")),
+                format!(
+                    "git: {} <{}>",
+                    p.git_author_name.as_deref().unwrap_or("—"),
+                    p.git_author_email.as_deref().unwrap_or("—")
+                ),
+                format!("github: {}", p.github_org.as_deref().unwrap_or("—")),
+            ];
+            for b in &p.bindings {
+                linhas.push(format!("  binding: {} -> {}", b.provider_id, b.config_home));
+            }
+            Ok(linhas.join("\n"))
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn executar_context_init(
+    store: &dyn Store,
+    client: String,
+    project: Option<String>,
+    git_name: Option<String>,
+    git_email: Option<String>,
+    github_org: Option<String>,
+) -> Result<String, String> {
+    if !store.client_exists(&client).map_err(|e| e.to_string())? {
+        store.upsert_client(&client).map_err(|e| e.to_string())?;
+    }
+    let id = format!(
+        "{client}{}",
+        project
+            .as_deref()
+            .map(|p| format!("-{p}"))
+            .unwrap_or_default()
+    );
+    let perfil = identidade::criar_perfil(
+        store,
+        NovoPerfil {
+            id,
+            client_id: client,
+            project,
+            git_author_name: git_name,
+            git_author_email: git_email,
+            github_org,
+            bindings: Vec::new(),
+            created_at: Instante::agora(),
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(format!("perfil criado: {}", perfil.id))
+}
+
+pub fn executar_vault_list(store: &dyn Store) -> Result<String, String> {
+    let credenciais = store.listar_credenciais().map_err(|e| e.to_string())?;
+    if credenciais.is_empty() {
+        return Ok("nenhuma credencial registrada".to_string());
+    }
+    let agora = Instante::agora();
+    let mut linhas = vec!["id\tlabel\tclasse\tcriado_em\tultimo_uso\texpiracao".to_string()];
+    for c in &credenciais {
+        let expiracao = match c.expires_at {
+            Some(exp) if c.esta_expirada(agora) => {
+                format!("{} (EXPIRADA)", formatar_instante(exp))
+            }
+            Some(exp) => formatar_instante(exp),
+            None => "—".to_string(),
+        };
+        linhas.push(format!(
+            "{}\t{}\t{:?}\t{}\t{}\t{}",
+            c.id,
+            c.label,
+            c.class,
+            formatar_instante(c.created_at),
+            c.last_used_at
+                .map(formatar_instante)
+                .unwrap_or_else(|| "—".to_string()),
+            expiracao,
+        ));
+    }
+    Ok(linhas.join("\n"))
+}
+
+// --- Continuity Pack (grupo 6) -------------------------------------------
+
+fn gerar_id_nota() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("nota-{nanos}")
+}
+
+pub fn executar_memory_note(store: &dyn Store, texto: String) -> Result<String, String> {
+    let contexto = store.contexto_ativo().map_err(|e| e.to_string())?;
+    let nota = continuidade::registrar_nota(
+        store,
+        contexto.as_ref(),
+        gerar_id_nota(),
+        CategoriaNota::Nota,
+        texto,
+        None,
+        Instante::agora(),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(format!("nota registrada: {}", nota.id))
+}
+
+pub fn executar_memory_decide(
+    store: &dyn Store,
+    texto: String,
+    why: String,
+) -> Result<String, String> {
+    let contexto = store.contexto_ativo().map_err(|e| e.to_string())?;
+    let nota = continuidade::registrar_nota(
+        store,
+        contexto.as_ref(),
+        gerar_id_nota(),
+        CategoriaNota::Decisao,
+        texto,
+        Some(why),
+        Instante::agora(),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(format!("decisão registrada: {}", nota.id))
+}
+
+pub fn executar_continuity_show(
+    store: &dyn Store,
+    cwd: &std::path::Path,
+) -> Result<String, String> {
+    let contexto = store.contexto_ativo().map_err(|e| e.to_string())?;
+    let pacote = continuidade::handoff(store, contexto.as_ref(), cwd).map_err(|e| e.to_string())?;
+    Ok(continuidade::formatar_pacote(&pacote, None))
+}
+
+pub fn executar_handoff(
+    store: &dyn Store,
+    cwd: &std::path::Path,
+    provider: &str,
+) -> Result<String, String> {
+    let contexto = store.contexto_ativo().map_err(|e| e.to_string())?;
+    let pacote = continuidade::handoff(store, contexto.as_ref(), cwd).map_err(|e| e.to_string())?;
+    Ok(continuidade::formatar_pacote(&pacote, Some(provider)))
+}
+
+/// Resolve o provider de um run: override explícito sempre vence (spec
+/// routing/provider-rules: "Override explícito sempre vence a regra") — só
+/// consulta `routing/rules.json` (relativo a `cwd`, mesmo diretório onde o
+/// operador roda `brian run`) quando o operador não especifica um.
+///
+/// Devolve `(provider, origem)` — `origem` é `None` para override explícito,
+/// ou a explicação da regra/`default` para `--explain-only`.
+fn resolver_provider(
+    store: &dyn Store,
+    cwd: &std::path::Path,
+    provider: Option<&str>,
+) -> Result<(String, Option<String>), String> {
+    if let Some(p) = provider {
+        return Ok((p.to_string(), None));
+    }
+
+    let contexto = store
+        .contexto_ativo()
+        .map_err(|e| e.to_string())?
+        .ok_or("nenhum contexto ativo")?;
+    let regras =
+        router::carregar_regras(&cwd.join("routing/rules.json")).map_err(|e| e.to_string())?;
+    let decisao = router::decidir(&regras, &contexto.client_id, contexto.project.as_deref());
+    let origem = match decisao.regra {
+        Some(r) => format!(
+            "regra when={{client: {:?}, project: {:?}}}",
+            r.when.client, r.when.project
+        ),
+        None => "default".to_string(),
+    };
+    Ok((decisao.provider.to_string(), Some(origem)))
+}
+
+pub fn executar_run(
+    store: &dyn Store,
+    cwd: &std::path::Path,
+    provider: Option<&str>,
+    model: Option<&str>,
+    tarefa: &str,
+    gate: Option<&str>,
+    explain_only: bool,
+) -> Result<String, String> {
+    let (provider_id, origem) = resolver_provider(store, cwd, provider)?;
+
+    if explain_only {
+        return Ok(match origem {
+            Some(o) => format!("provider escolhido: {provider_id} (via {o})"),
+            None => format!("provider escolhido: {provider_id} (override explícito)"),
+        });
+    }
+
+    let contexto = store.contexto_ativo().map_err(|e| e.to_string())?;
+    let run = execucao::iniciar_run(
+        store,
+        contexto.as_ref(),
+        cwd,
+        execucao::PedidoRun {
+            provider_id: &provider_id,
+            model,
+            tarefa,
+            gate,
+            base_commit: None,
+        },
+        Instante::agora(),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(format!(
+        "run {} — status: {:?}, worktree: {}",
+        run.id, run.status, run.worktree_path
+    ))
+}
+
+fn formatar_run_recover(r: &RunRegistrado) -> String {
+    format!(
+        "{} — provider: {}, pid: {}, worktree: {}",
+        r.id,
+        r.provider_id,
+        r.pid.map(|p| p.to_string()).unwrap_or_else(|| "?".into()),
+        r.worktree_path
+    )
+}
+
+pub fn executar_recover(store: &dyn Store, run: Option<&str>, all: bool) -> Result<String, String> {
+    let orfaos = execucao::runs_orfaos(store).map_err(|e| e.to_string())?;
+    if orfaos.is_empty() {
+        return Ok("nenhum run órfão encontrado".to_string());
+    }
+
+    if let Some(run_id) = run {
+        if !orfaos.iter().any(|r| r.id == run_id) {
+            return Err(format!("'{run_id}' não é um run órfão"));
+        }
+        execucao::recuperar(store, run_id, Instante::agora()).map_err(|e| e.to_string())?;
+        return Ok(format!("run {run_id} recuperado (abandonado)"));
+    }
+
+    if all {
+        for r in &orfaos {
+            execucao::recuperar(store, &r.id, Instante::agora()).map_err(|e| e.to_string())?;
+        }
+        return Ok(format!(
+            "{} run(s) recuperado(s) (abandonados)",
+            orfaos.len()
+        ));
+    }
+
+    let linhas: Vec<String> = orfaos.iter().map(formatar_run_recover).collect();
+    Ok(format!(
+        "{} run(s) órfão(s) — use --run <id> ou --all para finalizar:\n{}",
+        orfaos.len(),
+        linhas.join("\n")
+    ))
+}
+
+pub fn executar_worktree_list(store: &dyn Store) -> Result<String, String> {
+    let mut runs = store.runs_em_execucao().map_err(|e| e.to_string())?;
+    runs.extend(store.runs_abandonados().map_err(|e| e.to_string())?);
+
+    if runs.is_empty() {
+        return Ok("nenhum worktree ativo ou abandonado".to_string());
+    }
+
+    let linhas: Vec<String> = runs
+        .iter()
+        .map(|r| {
+            format!(
+                "{} — status: {:?}, branch: {}, worktree: {}",
+                r.id, r.status, r.branch, r.worktree_path
+            )
+        })
+        .collect();
+    Ok(linhas.join("\n"))
+}
+
+pub fn executar_eval_run(
+    store: &dyn Store,
+    dir: &std::path::Path,
+    case: Option<&str>,
+) -> Result<String, String> {
+    let mut casos = crate::eval::carregar_casos_do_diretorio(dir).map_err(|e| e.to_string())?;
+    if let Some(id) = case {
+        casos.retain(|c| c.id == id);
+        if casos.is_empty() {
+            return Err(format!("caso '{id}' não encontrado em {}", dir.display()));
+        }
+    }
+    if casos.is_empty() {
+        return Ok(format!(
+            "nenhum caso de eval encontrado em {}",
+            dir.display()
+        ));
+    }
+
+    let mut linhas = Vec::with_capacity(casos.len());
+    for caso in &casos {
+        let runs =
+            crate::eval::rodar_caso(store, caso, Instante::agora()).map_err(|e| e.to_string())?;
+        linhas.push(crate::eval::formatar_relatorio(caso, &runs));
+    }
+    Ok(linhas.join("\n"))
 }
 
 #[cfg(test)]
@@ -762,5 +1575,275 @@ mod tests {
             campos[idx_equiv], "—",
             "equivalente desconhecido não é zero"
         );
+    }
+
+    // --- brian plans allocation (achado do audit da task 10.1) -----------
+
+    fn store_com_migracoes() -> crate::storage::sqlite::SqliteStore {
+        let s = crate::storage::sqlite::SqliteStore::open(":memory:").unwrap();
+        s.migrate().unwrap();
+        s
+    }
+
+    #[test]
+    fn plans_allocation_sem_plano_detectado() {
+        let s = store_com_migracoes();
+        let saida = executar_plans_allocation(&s, "grok", None).unwrap();
+        assert!(saida.contains("sem plano detectado"));
+    }
+
+    #[test]
+    fn plans_allocation_recusa_billing_mode_api() {
+        // Spec plan-cost-allocation, "Rateio se aplica apenas a planos de
+        // assinatura".
+        let s = store_com_migracoes();
+        s.registrar_plano(crate::storage::NovoPlano {
+            provider_id: "codex".into(),
+            billing_mode: BillingMode::Api,
+            plan_label: None,
+            detectado_em: Instante(0),
+        })
+        .unwrap();
+        let saida = executar_plans_allocation(&s, "codex", None).unwrap();
+        assert!(saida.contains("não se aplica"));
+    }
+
+    #[test]
+    fn plans_allocation_divide_proporcional_entre_clientes() {
+        let s = store_com_migracoes();
+        s.upsert_client("xpto").unwrap();
+        s.upsert_client("acme").unwrap();
+        s.registrar_plano(crate::storage::NovoPlano {
+            provider_id: "codex".into(),
+            billing_mode: BillingMode::Subscription,
+            plan_label: Some("team".into()),
+            detectado_em: Instante(0),
+        })
+        .unwrap();
+
+        let occurred_at = Instante(
+            crate::adapters::tempo::parse_timestamp_iso8601("2026-01-15T00:00:00Z").unwrap(),
+        );
+
+        let mut c1 = crate::storage::test_util::novo_consumo("k1", "codex", "gpt");
+        c1.client_id = Some("xpto".into());
+        c1.occurred_at = occurred_at;
+        s.gravar_consumo(c1).unwrap();
+
+        let mut c2 = crate::storage::test_util::novo_consumo("k2", "codex", "gpt");
+        c2.client_id = Some("acme".into());
+        c2.occurred_at = occurred_at;
+        s.gravar_consumo(c2).unwrap();
+
+        // xpto e acme usam a mesma fixture (150 tokens conhecidos cada) --
+        // divisão deve ficar 50/50.
+        let saida = executar_plans_allocation(&s, "codex", Some("2026-01".to_string())).unwrap();
+        assert!(saida.contains("xpto\t50.0%"));
+        assert!(saida.contains("acme\t50.0%"));
+    }
+
+    // --- brian whoami (achado do audit da task 7.1) -----------------------
+
+    struct ColetorFalso {
+        provider_id: &'static str,
+        resultado: std::result::Result<crate::domain::PlanoDetectado, ()>,
+    }
+
+    impl ColetorDeCapacidade for ColetorFalso {
+        fn provider_id(&self) -> &str {
+            self.provider_id
+        }
+        fn consultar(
+            &self,
+        ) -> std::result::Result<
+            (
+                crate::domain::PlanoDetectado,
+                Vec<crate::domain::SinalDeQuotaColetado>,
+            ),
+            crate::importacao::ErroColeta,
+        > {
+            self.resultado
+                .clone()
+                .map(|plano| (plano, Vec::new()))
+                .map_err(|_| crate::importacao::ErroColeta {
+                    motivo: "não autenticado".into(),
+                })
+        }
+    }
+
+    #[test]
+    fn whoami_sem_contexto_ativo_informa_explicitamente() {
+        let s = crate::storage::sqlite::SqliteStore::open(":memory:").unwrap();
+        s.migrate().unwrap();
+        let saida = executar_whoami(&s, &[]).unwrap();
+        assert_eq!(saida, "nenhum contexto ativo");
+    }
+
+    #[test]
+    fn whoami_com_contexto_ativo_mostra_conta_autenticada_por_provider() {
+        let s = crate::storage::sqlite::SqliteStore::open(":memory:").unwrap();
+        s.migrate().unwrap();
+        s.upsert_client("xpto").unwrap();
+        s.criar_perfil(crate::storage::NovoPerfil {
+            id: "p1".into(),
+            client_id: "xpto".into(),
+            project: Some("checkout-api".into()),
+            git_author_name: Some("Joao Costa".into()),
+            git_author_email: Some("joao@xpto.com.br".into()),
+            github_org: Some("xpto-org".into()),
+            bindings: vec![],
+            created_at: Instante(0),
+        })
+        .unwrap();
+        identidade::conectar(&s, "xpto", None, Instante(1)).unwrap();
+
+        let coletores: Vec<Box<dyn ColetorDeCapacidade>> = vec![
+            Box::new(ColetorFalso {
+                provider_id: "claude",
+                resultado: Ok(crate::domain::PlanoDetectado {
+                    billing_mode: BillingMode::Subscription,
+                    plan_label: Some("pro".into()),
+                    account_email: Some("eng@xpto.com.br".into()),
+                }),
+            }),
+            Box::new(ColetorFalso {
+                provider_id: "codex",
+                resultado: Err(()),
+            }),
+        ];
+
+        let saida = executar_whoami(&s, &coletores).unwrap();
+        assert!(saida.contains("cliente: xpto"));
+        assert!(saida.contains("projeto: checkout-api"));
+        assert!(saida.contains("git: Joao Costa <joao@xpto.com.br>"));
+        assert!(
+            saida.contains("claude\tautenticado\teng@xpto.com.br"),
+            "spec: mostra a conta autenticada, não só o status. Saída: {saida}"
+        );
+        assert!(saida.contains("codex\tnão autenticado\t—"));
+    }
+
+    fn store_com_contexto_ativo() -> crate::storage::sqlite::SqliteStore {
+        let s = crate::storage::sqlite::SqliteStore::open(":memory:").unwrap();
+        s.migrate().unwrap();
+        s.upsert_client("xpto").unwrap();
+        s.criar_perfil(NovoPerfil {
+            id: "p1".into(),
+            client_id: "xpto".into(),
+            project: Some("checkout-api".into()),
+            git_author_name: None,
+            git_author_email: None,
+            github_org: None,
+            bindings: vec![],
+            created_at: Instante(0),
+        })
+        .unwrap();
+        identidade::conectar(&s, "xpto", Some("checkout-api"), Instante(1)).unwrap();
+        s
+    }
+
+    fn repo_git_temporario_para_run(sufixo: &str) -> std::path::PathBuf {
+        let dir = crate::testutil::dir_temporario_unico(&format!("comandos-run-{sufixo}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .output()
+                .unwrap()
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.email", "teste@teste.com"]);
+        git(&["config", "user.name", "Teste"]);
+        std::fs::write(dir.join("README.md"), "inicial").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "inicial"]);
+        dir
+    }
+
+    #[test]
+    fn executar_run_com_provider_explicito_nao_consulta_regras() {
+        let s = store_com_contexto_ativo();
+        let repo = repo_git_temporario_para_run("explicito");
+        // Sem routing/rules.json em `repo` -- se a implementação tentasse
+        // carregar regras mesmo com override, o erro seria "erro lendo
+        // regras", não o de provider inválido.
+        let erro =
+            executar_run(&s, &repo, Some("claude"), None, "tarefa", None, false).unwrap_err();
+        assert!(
+            erro.contains("não tem execução não-interativa verificada"),
+            "esperava erro de provider inválido do execucao::iniciar_run, veio: {erro}"
+        );
+        std::fs::remove_dir_all(&repo).ok();
+    }
+
+    #[test]
+    fn executar_run_sem_provider_usa_decisao_de_regras() {
+        let s = store_com_contexto_ativo();
+        let repo = repo_git_temporario_para_run("regra");
+        std::fs::create_dir_all(repo.join("routing")).unwrap();
+        std::fs::write(
+            repo.join("routing/rules.json"),
+            r#"{"default": {"provider": "claude"}, "rules": []}"#,
+        )
+        .unwrap();
+
+        let erro = executar_run(&s, &repo, None, None, "tarefa", None, false).unwrap_err();
+        assert!(
+            erro.contains("não tem execução não-interativa verificada"),
+            "provider decidido pela regra (claude) deveria chegar até a validação de \
+             execucao::iniciar_run e falhar por lá, veio: {erro}"
+        );
+        std::fs::remove_dir_all(&repo).ok();
+    }
+
+    #[test]
+    fn explain_only_mostra_decisao_sem_criar_run() {
+        let s = store_com_contexto_ativo();
+        let repo = repo_git_temporario_para_run("explain");
+        std::fs::create_dir_all(repo.join("routing")).unwrap();
+        std::fs::write(
+            repo.join("routing/rules.json"),
+            r#"{"default": {"provider": "codex"}, "rules": []}"#,
+        )
+        .unwrap();
+
+        let saida = executar_run(&s, &repo, None, None, "tarefa", None, true).unwrap();
+        assert!(saida.contains("codex"));
+        assert!(saida.contains("default"));
+        assert!(
+            s.runs_em_execucao().unwrap().is_empty(),
+            "--explain-only não deveria ter criado run nenhum"
+        );
+        std::fs::remove_dir_all(&repo).ok();
+    }
+
+    #[test]
+    fn explain_only_reporta_regra_mesmo_quando_provider_igual_ao_default() {
+        // Regressão: `store_com_contexto_ativo` usa project="checkout-api",
+        // que casa com a regra abaixo -- mesmo o provider da regra sendo
+        // igual ao `default`, a explicação precisa dizer "regra", não
+        // "default" (mesmo bug coberto em router::tests).
+        let s = store_com_contexto_ativo();
+        let repo = repo_git_temporario_para_run("explain-regra");
+        std::fs::create_dir_all(repo.join("routing")).unwrap();
+        std::fs::write(
+            repo.join("routing/rules.json"),
+            r#"{
+                "default": {"provider": "codex"},
+                "rules": [
+                    {"when": {"project": "checkout-api"}, "then": {"provider": "codex"}}
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let saida = executar_run(&s, &repo, None, None, "tarefa", None, true).unwrap();
+        assert!(saida.contains("codex"));
+        assert!(
+            saida.contains("regra"),
+            "regra casou (project=checkout-api) e deveria ser reportada como origem, veio: {saida}"
+        );
+        std::fs::remove_dir_all(&repo).ok();
     }
 }

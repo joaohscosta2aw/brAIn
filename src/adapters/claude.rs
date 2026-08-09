@@ -8,11 +8,15 @@
 //! estender este adapter para produção real.
 
 use super::tempo::parse_timestamp_iso8601;
-use crate::domain::{BillingMode, Instante, Tokens, UsageSource};
+use crate::capacidade::ColetorDeCapacidade;
+use crate::domain::{
+    BillingMode, Instante, PlanoDetectado, SinalDeQuotaColetado, Tokens, UsageSource,
+};
 use crate::importacao::{ColetorDeUso, ConsumoColetado, ErroColeta, TierIntegracao};
 use crate::storage::Periodo;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 /// Um registro de uso já extraído de uma linha — sem I/O, testável contra
 /// fixture sem tocar no filesystem real (task 6.1).
@@ -79,17 +83,92 @@ fn parse_linha(linha: &str) -> Option<RegistroExtraido> {
 pub struct ClaudeAdapter {
     raiz_projects: PathBuf,
     cwd: PathBuf,
+    /// Injetável para teste — em produção é sempre `claude`.
+    executavel_auth: String,
 }
 
 impl ClaudeAdapter {
     pub fn new(cwd: PathBuf) -> Self {
         let raiz_projects = dirs_home().join(".claude").join("projects");
-        Self { raiz_projects, cwd }
+        Self {
+            raiz_projects,
+            cwd,
+            executavel_auth: "claude".to_string(),
+        }
     }
 
     fn diretorio_sessoes(&self) -> PathBuf {
         self.raiz_projects
             .join(codificar_diretorio_projeto(&self.cwd))
+    }
+}
+
+/// Extrai o plano de uma saída de `claude auth status --output json`
+/// (padrão: JSON). `subscriptionType` só aparece quando a conta é
+/// assinatura — sua ausência (login por API key/console) é o sinal de
+/// `billing_mode = Api`, não um erro de parsing (spec plan-catalog:
+/// "Provider relata plano de API").
+fn parsear_status_claude(saida_json: &str) -> Option<PlanoDetectado> {
+    let v: serde_json::Value = serde_json::from_str(saida_json).ok()?;
+    if v.get("loggedIn").and_then(|x| x.as_bool()) != Some(true) {
+        return None;
+    }
+    let plan_label = v
+        .get("subscriptionType")
+        .and_then(|x| x.as_str())
+        .map(String::from);
+    let billing_mode = if plan_label.is_some() {
+        BillingMode::Subscription
+    } else {
+        BillingMode::Api
+    };
+    let account_email = v.get("email").and_then(|x| x.as_str()).map(String::from);
+    Some(PlanoDetectado {
+        billing_mode,
+        plan_label,
+        account_email,
+    })
+}
+
+impl ColetorDeCapacidade for ClaudeAdapter {
+    fn provider_id(&self) -> &str {
+        "claude"
+    }
+
+    /// `claude auth status` não expõe percentual de cota — só o plano. Sem
+    /// sinal de quota, o vetor devolvido é sempre vazio (design.md: "Claude
+    /// gets plan detection only, no quota_signal").
+    fn consultar(&self) -> Result<(PlanoDetectado, Vec<SinalDeQuotaColetado>), ErroColeta> {
+        let saida = Command::new(&self.executavel_auth)
+            .args(["auth", "status"])
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| ErroColeta {
+                motivo: format!(
+                    "não foi possível executar `{} auth status`: {e}",
+                    self.executavel_auth
+                ),
+            })?;
+
+        if !saida.status.success() {
+            return Err(ErroColeta {
+                motivo: format!(
+                    "`{} auth status` retornou erro: {}",
+                    self.executavel_auth,
+                    String::from_utf8_lossy(&saida.stderr)
+                ),
+            });
+        }
+
+        let stdout = String::from_utf8_lossy(&saida.stdout);
+        let plano = parsear_status_claude(&stdout).ok_or_else(|| ErroColeta {
+            motivo: format!(
+                "saída inesperada de `{} auth status`: {stdout}",
+                self.executavel_auth
+            ),
+        })?;
+
+        Ok((plano, Vec::new()))
     }
 }
 
@@ -268,6 +347,7 @@ mod tests {
         let adapter = ClaudeAdapter {
             raiz_projects: PathBuf::from("/caminho/que/nao/existe/de/proposito"),
             cwd: PathBuf::from("/qualquer"),
+            executavel_auth: "claude".to_string(),
         };
         let r = adapter
             .coletar(Periodo {
@@ -279,16 +359,7 @@ mod tests {
     }
 
     fn diretorio_temporario_unico() -> PathBuf {
-        let mut p = std::env::temp_dir();
-        p.push(format!(
-            "brian-teste-adapter-claude-{}-{:?}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        p
+        crate::testutil::dir_temporario_unico("adapter-claude")
     }
 
     #[test]
@@ -304,6 +375,7 @@ mod tests {
         let adapter = ClaudeAdapter {
             raiz_projects: raiz.clone(),
             cwd,
+            executavel_auth: "claude".to_string(),
         };
 
         let itens = adapter
@@ -335,6 +407,7 @@ mod tests {
         let adapter = ClaudeAdapter {
             raiz_projects: raiz.clone(),
             cwd,
+            executavel_auth: "claude".to_string(),
         };
 
         // As 3 linhas com usage vão de 13:18:29 a 13:20:15 UTC em 2026-08-08.
@@ -350,5 +423,97 @@ mod tests {
         assert_eq!(itens.len(), 2, "recorte deve excluir a linha mais recente");
 
         std::fs::remove_dir_all(&raiz).ok();
+    }
+
+    const STATUS_ASSINATURA: &str = r#"{
+        "loggedIn": true,
+        "authMethod": "claude.ai",
+        "apiProvider": "firstParty",
+        "email": "joaohenrique@workwise.com.br",
+        "orgId": "b9eb25a4-41ce-4512-b90a-efa3bb274d07",
+        "orgName": "joaohenrique@workwise.com.br's Organization",
+        "subscriptionType": "pro"
+    }"#;
+
+    const STATUS_API: &str = r#"{
+        "loggedIn": true,
+        "authMethod": "console",
+        "apiProvider": "firstParty",
+        "email": "joaohenrique@workwise.com.br"
+    }"#;
+
+    #[test]
+    fn parsear_status_de_assinatura_extrai_plano() {
+        let plano = parsear_status_claude(STATUS_ASSINATURA).unwrap();
+        assert_eq!(plano.billing_mode, BillingMode::Subscription);
+        assert_eq!(plano.plan_label.as_deref(), Some("pro"));
+    }
+
+    #[test]
+    fn parsear_status_sem_subscription_type_e_billing_mode_api() {
+        // spec plan-catalog, "Provider relata plano de API": ausência de
+        // subscriptionType não é erro de parsing, é o sinal de API.
+        let plano = parsear_status_claude(STATUS_API).unwrap();
+        assert_eq!(plano.billing_mode, BillingMode::Api);
+        assert_eq!(plano.plan_label, None);
+    }
+
+    #[test]
+    fn parsear_status_nao_logado_e_none() {
+        assert!(parsear_status_claude(r#"{"loggedIn": false}"#).is_none());
+    }
+
+    #[test]
+    fn parsear_status_json_invalido_e_none() {
+        assert!(parsear_status_claude("isto não é json").is_none());
+    }
+
+    fn script_que_responde(saida_json: &str) -> PathBuf {
+        let caminho = crate::testutil::dir_temporario_unico("fake-claude");
+        std::fs::write(
+            &caminho,
+            format!("#!/bin/sh\ncat <<'EOF'\n{saida_json}\nEOF\n"),
+        )
+        .unwrap();
+        std::fs::set_permissions(
+            &caminho,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+        caminho
+    }
+
+    #[test]
+    fn consultar_ponta_a_ponta_devolve_plano_sem_sinais_de_quota() {
+        let script = script_que_responde(STATUS_ASSINATURA);
+        let adapter = ClaudeAdapter {
+            raiz_projects: PathBuf::from("/nao/usado"),
+            cwd: PathBuf::from("/nao/usado"),
+            executavel_auth: script.to_string_lossy().to_string(),
+        };
+
+        let (plano, sinais) = adapter.consultar().unwrap();
+        assert_eq!(plano.plan_label.as_deref(), Some("pro"));
+        assert_eq!(
+            plano.account_email.as_deref(),
+            Some("joaohenrique@workwise.com.br"),
+            "spec context-switching: whoami mostra a conta autenticada, não só o status"
+        );
+        assert!(
+            sinais.is_empty(),
+            "claude auth status não dá percentual — nunca fabrica sinal de quota"
+        );
+
+        std::fs::remove_file(&script).ok();
+    }
+
+    #[test]
+    fn consultar_com_executavel_ausente_falha_sem_travar() {
+        let adapter = ClaudeAdapter {
+            raiz_projects: PathBuf::from("/nao/usado"),
+            cwd: PathBuf::from("/nao/usado"),
+            executavel_auth: "/caminho/que/nao/existe/de/proposito".to_string(),
+        };
+        assert!(adapter.consultar().is_err());
     }
 }

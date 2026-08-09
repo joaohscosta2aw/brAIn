@@ -14,10 +14,17 @@
 //! Risco de ToS aceito conscientemente (design.md, R-4).
 
 use super::tempo::parse_timestamp_iso8601;
-use crate::domain::{BillingMode, Instante, Tokens, UsageSource};
+use crate::capacidade::ColetorDeCapacidade;
+use crate::domain::{
+    BillingMode, Instante, PlanoDetectado, SinalDeQuotaColetado, Tokens, UsageSource,
+};
 use crate::importacao::{ColetorDeUso, ConsumoColetado, ErroColeta, TierIntegracao};
 use crate::storage::Periodo;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::process::{ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::mpsc;
+use std::time::Duration;
 
 #[derive(Debug, Clone, PartialEq)]
 struct UsoExtraido {
@@ -102,12 +109,18 @@ fn cwd_da_sessao(primeira_linha: &str) -> Option<String> {
 pub struct CodexAdapter {
     raiz_sessions: PathBuf,
     cwd: PathBuf,
+    /// Injetável para teste — em produção é sempre `codex`.
+    executavel_appserver: String,
 }
 
 impl CodexAdapter {
     pub fn new(cwd: PathBuf) -> Self {
         let raiz_sessions = dirs_home().join(".codex").join("sessions");
-        Self { raiz_sessions, cwd }
+        Self {
+            raiz_sessions,
+            cwd,
+            executavel_appserver: "codex".to_string(),
+        }
     }
 }
 
@@ -115,6 +128,177 @@ fn dirs_home() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// `codex app-server` já responde rápido a estas duas chamadas (é leitura de
+/// estado de conta, não geração de modelo) — mesma lógica de prazo curto do
+/// timeout do Gemini (design.md: "risco aceito, mesmo padrão do incidente
+/// Gemini").
+const TIMEOUT_APP_SERVER: Duration = Duration::from_secs(5);
+
+fn erro(motivo: impl Into<String>) -> ErroColeta {
+    ErroColeta {
+        motivo: motivo.into(),
+    }
+}
+
+fn enviar(stdin: &mut ChildStdin, msg: &serde_json::Value) -> Result<(), ErroColeta> {
+    let linha = format!("{msg}\n");
+    stdin
+        .write_all(linha.as_bytes())
+        .map_err(|e| erro(format!("erro escrevendo para app-server: {e}")))?;
+    stdin
+        .flush()
+        .map_err(|e| erro(format!("erro fazendo flush para app-server: {e}")))
+}
+
+/// Lê linhas até achar a resposta com `id` esperado, ignorando notificações
+/// e respostas de outras chamadas que cheguem intercaladas (confirmado
+/// contra o processo real: `remoteControl/status/changed` chega sem pedir).
+fn ler_resposta(
+    leitor: &mut BufReader<ChildStdout>,
+    id_esperado: i64,
+) -> Result<serde_json::Value, ErroColeta> {
+    loop {
+        let mut linha = String::new();
+        let n = leitor
+            .read_line(&mut linha)
+            .map_err(|e| erro(format!("erro lendo app-server: {e}")))?;
+        if n == 0 {
+            return Err(erro("app-server encerrou antes de responder"));
+        }
+        let v: serde_json::Value = serde_json::from_str(linha.trim())
+            .map_err(|e| erro(format!("resposta inválida do app-server: {e}")))?;
+        if v.get("id").and_then(|x| x.as_i64()) == Some(id_esperado) {
+            return Ok(v);
+        }
+        // notificação (sem id) ou resposta de outra chamada — ignora e segue lendo.
+    }
+}
+
+/// Um bucket de janela extraído de `account/rateLimits/read` — `primary` e
+/// `secondary` do payload, cada um com o formato que vira `SinalDeQuotaColetado`.
+fn extrair_janelas(rate_limits: &serde_json::Value) -> Vec<SinalDeQuotaColetado> {
+    let mut janelas = Vec::new();
+    for bucket_id in ["primary", "secondary"] {
+        let janela = &rate_limits[bucket_id];
+        let Some(used_percent) = janela["usedPercent"].as_f64() else {
+            continue; // ausente/null — este bucket não existe para o plano atual
+        };
+        let reset_at = janela["resetsAt"].as_i64().map(Instante);
+        janelas.push(SinalDeQuotaColetado {
+            bucket_id: bucket_id.to_string(),
+            grupo: "rate_limits".to_string(),
+            remaining_percent: 100.0 - used_percent,
+            reset_at,
+        });
+    }
+    janelas
+}
+
+/// Handshake `initialize` + as duas chamadas de conta, tudo síncrono sobre o
+/// mesmo par stdin/stdout do processo já aberto por quem chama.
+fn conversar(
+    mut stdin: ChildStdin,
+    stdout: ChildStdout,
+) -> Result<(PlanoDetectado, Vec<SinalDeQuotaColetado>), ErroColeta> {
+    let mut leitor = BufReader::new(stdout);
+
+    enviar(
+        &mut stdin,
+        &serde_json::json!({
+            "method": "initialize",
+            "id": 0,
+            "params": {"clientInfo": {"name": "brian", "title": "Brian", "version": "0.0.0"}}
+        }),
+    )?;
+    ler_resposta(&mut leitor, 0)?;
+
+    enviar(
+        &mut stdin,
+        &serde_json::json!({"method": "account/read", "id": 1, "params": {"refreshToken": false}}),
+    )?;
+    let resposta_conta = ler_resposta(&mut leitor, 1)?;
+
+    enviar(
+        &mut stdin,
+        &serde_json::json!({"method": "account/rateLimits/read", "id": 2}),
+    )?;
+    let resposta_limites = ler_resposta(&mut leitor, 2)?;
+
+    let plan_label = resposta_conta["result"]["account"]["planType"]
+        .as_str()
+        .map(String::from);
+    let billing_mode = if plan_label.is_some() {
+        BillingMode::Subscription
+    } else {
+        BillingMode::Api
+    };
+    let account_email = resposta_conta["result"]["account"]["email"]
+        .as_str()
+        .map(String::from);
+
+    let janelas = extrair_janelas(&resposta_limites["result"]["rateLimits"]);
+
+    Ok((
+        PlanoDetectado {
+            billing_mode,
+            plan_label,
+            account_email,
+        },
+        janelas,
+    ))
+}
+
+impl ColetorDeCapacidade for CodexAdapter {
+    fn provider_id(&self) -> &str {
+        "codex"
+    }
+
+    /// Cliente JSON-RPC mínimo (design.md: "não um SDK completo") — abre o
+    /// processo, faz o handshake, lê as duas respostas, encerra. Sem manter
+    /// conexão viva entre importações, sem assinar notificações.
+    fn consultar(&self) -> Result<(PlanoDetectado, Vec<SinalDeQuotaColetado>), ErroColeta> {
+        let mut filho = Command::new(&self.executavel_appserver)
+            .args(["app-server", "--stdio"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| {
+                erro(format!(
+                    "não foi possível executar `{} app-server`: {e}",
+                    self.executavel_appserver
+                ))
+            })?;
+
+        let stdin = filho
+            .stdin
+            .take()
+            .ok_or_else(|| erro("sem stdin do app-server"))?;
+        let stdout = filho
+            .stdout
+            .take()
+            .ok_or_else(|| erro("sem stdout do app-server"))?;
+
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(conversar(stdin, stdout));
+        });
+
+        let resultado = rx.recv_timeout(TIMEOUT_APP_SERVER).unwrap_or_else(|_| {
+            Err(erro(format!(
+                "`{} app-server` não respondeu em {}s",
+                self.executavel_appserver,
+                TIMEOUT_APP_SERVER.as_secs()
+            )))
+        });
+
+        let _ = filho.kill();
+        let _ = filho.wait();
+
+        resultado
+    }
 }
 
 /// Lista recursivamente os `.jsonl` sob `raiz` (estrutura AAAA/MM/DD/*.jsonl,
@@ -255,16 +439,7 @@ mod tests {
     }
 
     fn diretorio_temporario_unico() -> PathBuf {
-        let mut p = std::env::temp_dir();
-        p.push(format!(
-            "brian-teste-adapter-codex-{}-{:?}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        p
+        crate::testutil::dir_temporario_unico("adapter-codex")
     }
 
     #[test]
@@ -282,6 +457,7 @@ mod tests {
         let adapter = CodexAdapter {
             raiz_sessions: raiz.clone(),
             cwd: PathBuf::from("/projeto/teste"),
+            executavel_appserver: "codex".to_string(),
         };
 
         let itens = adapter
@@ -302,6 +478,7 @@ mod tests {
         let adapter = CodexAdapter {
             raiz_sessions: PathBuf::from("/caminho/inexistente/de/proposito"),
             cwd: PathBuf::from("/qualquer"),
+            executavel_appserver: "codex".to_string(),
         };
         let r = adapter
             .coletar(Periodo {
@@ -310,5 +487,128 @@ mod tests {
             })
             .unwrap();
         assert!(r.is_empty());
+    }
+
+    fn caminho_temporario_unico(nome: &str) -> PathBuf {
+        crate::testutil::dir_temporario_unico(&format!("fake-codex-{nome}"))
+    }
+
+    /// Fake `codex app-server`: lê linhas JSON-RPC do stdin e responde por
+    /// `id`, incluindo uma notificação sem `id` intercalada antes da
+    /// resposta de `account/read` — exatamente o que o processo real fez
+    /// (`remoteControl/status/changed`), para provar que `ler_resposta`
+    /// não se engana com ela.
+    fn script_app_server_que_responde() -> PathBuf {
+        let caminho = caminho_temporario_unico("responde");
+        std::fs::write(
+            &caminho,
+            r#"#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *'"id":0'*) echo '{"id":0,"result":{"userAgent":"test"}}' ;;
+    *'"id":1'*)
+      echo '{"method":"remoteControl/status/changed","params":{"status":"disabled"}}'
+      echo '{"id":1,"result":{"account":{"type":"chatgpt","email":"x@y.com","planType":"team"},"requiresOpenaiAuth":true}}'
+      ;;
+    *'"id":2'*)
+      echo '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":25,"windowDurationMins":10080,"resetsAt":1786844408},"secondary":null}}}'
+      ;;
+  esac
+done
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(
+            &caminho,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+        caminho
+    }
+
+    fn script_que_dorme(segundos: u64) -> PathBuf {
+        let caminho = caminho_temporario_unico("dorme");
+        std::fs::write(&caminho, format!("#!/bin/sh\nsleep {segundos}\n")).unwrap();
+        std::fs::set_permissions(
+            &caminho,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+        caminho
+    }
+
+    #[test]
+    fn extrair_janelas_le_primary_e_ignora_secondary_nulo() {
+        let rate_limits = serde_json::json!({
+            "primary": {"usedPercent": 25, "windowDurationMins": 10080, "resetsAt": 1_786_844_408i64},
+            "secondary": null,
+        });
+        let janelas = extrair_janelas(&rate_limits);
+        assert_eq!(janelas.len(), 1);
+        assert_eq!(janelas[0].bucket_id, "primary");
+        assert_eq!(janelas[0].remaining_percent, 75.0);
+        assert_eq!(janelas[0].reset_at, Some(Instante(1_786_844_408)));
+    }
+
+    #[test]
+    fn extrair_janelas_le_ambos_quando_presentes() {
+        let rate_limits = serde_json::json!({
+            "primary": {"usedPercent": 25, "resetsAt": 1},
+            "secondary": {"usedPercent": 60, "resetsAt": 2},
+        });
+        assert_eq!(extrair_janelas(&rate_limits).len(), 2);
+    }
+
+    #[test]
+    fn consultar_ponta_a_ponta_extrai_plano_e_janelas() {
+        let script = script_app_server_que_responde();
+        let adapter = CodexAdapter {
+            raiz_sessions: PathBuf::from("/nao/usado"),
+            cwd: PathBuf::from("/nao/usado"),
+            executavel_appserver: script.to_string_lossy().to_string(),
+        };
+
+        let (plano, janelas) = adapter.consultar().unwrap();
+        assert_eq!(plano.billing_mode, BillingMode::Subscription);
+        assert_eq!(plano.plan_label.as_deref(), Some("team"));
+        assert_eq!(plano.account_email.as_deref(), Some("x@y.com"));
+        assert_eq!(janelas.len(), 1);
+        assert_eq!(janelas[0].bucket_id, "primary");
+        assert_eq!(janelas[0].remaining_percent, 75.0);
+
+        std::fs::remove_file(&script).ok();
+    }
+
+    #[test]
+    fn consultar_com_processo_que_nao_responde_falha_apos_timeout_nao_trava() {
+        let script = script_que_dorme(30); // bem maior que TIMEOUT_APP_SERVER
+        let adapter = CodexAdapter {
+            raiz_sessions: PathBuf::from("/nao/usado"),
+            cwd: PathBuf::from("/nao/usado"),
+            executavel_appserver: script.to_string_lossy().to_string(),
+        };
+
+        let inicio = std::time::Instant::now();
+        let resultado = adapter.consultar();
+        let duracao = inicio.elapsed();
+
+        assert!(resultado.is_err(), "deve falhar, não travar esperando");
+        assert!(
+            duracao < Duration::from_secs(10),
+            "deve respeitar o timeout de {}s, levou {duracao:?}",
+            TIMEOUT_APP_SERVER.as_secs()
+        );
+
+        std::fs::remove_file(&script).ok();
+    }
+
+    #[test]
+    fn consultar_com_executavel_ausente_falha_sem_travar() {
+        let adapter = CodexAdapter {
+            raiz_sessions: PathBuf::from("/nao/usado"),
+            cwd: PathBuf::from("/nao/usado"),
+            executavel_appserver: "/caminho/que/nao/existe/de/proposito".to_string(),
+        };
+        assert!(adapter.consultar().is_err());
     }
 }

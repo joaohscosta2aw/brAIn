@@ -206,16 +206,7 @@ mod tests {
     }
 
     fn diretorio_temporario_unico() -> PathBuf {
-        let mut p = std::env::temp_dir();
-        p.push(format!(
-            "brian-teste-adapter-copilot-{}-{:?}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        p
+        crate::testutil::dir_temporario_unico("adapter-copilot")
     }
 
     #[test]

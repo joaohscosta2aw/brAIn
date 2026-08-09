@@ -3,14 +3,27 @@
 //! Comportamento aprovado vive em `openspec/`.
 
 pub mod adapters;
+pub mod capacidade;
 pub mod comandos;
+pub mod continuidade;
 pub mod custo;
 pub mod domain;
+pub mod eval;
+pub mod execucao;
+pub mod identidade;
 pub mod importacao;
+pub mod router;
 pub mod storage;
+#[cfg(test)]
+mod testutil;
+pub mod vault;
 
+use capacidade::ColetorDeCapacidade;
 use clap::Parser;
-use comandos::{Cli, Comando};
+use comandos::{
+    Cli, Comando, ComandoContext, ComandoEval, ComandoMemory, ComandoPlans, ComandoVault,
+    ComandoWorktree,
+};
 use importacao::ColetorDeUso;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -36,6 +49,18 @@ fn coletores(cwd: PathBuf) -> Vec<Box<dyn ColetorDeUso>> {
         Box::new(adapters::qwen::QwenAdapter::deepseek(cwd.clone())),
         Box::new(adapters::qwen::QwenAdapter::zai(cwd.clone())),
         Box::new(adapters::qwen::QwenAdapter::kimi(cwd)),
+    ]
+}
+
+/// Coletores de plano/quota — só os três providers com fonte verificada
+/// (capacidade::PROVIDERS_VERIFICADOS). Grok/Copilot/Qwen não entram: sem
+/// fonte, documentado em `capacidade::providers_sem_fonte`, não um
+/// `ColetorDeCapacidade` que sempre falharia.
+fn coletores_capacidade(cwd: PathBuf) -> Vec<Box<dyn ColetorDeCapacidade>> {
+    vec![
+        Box::new(adapters::claude::ClaudeAdapter::new(cwd.clone())),
+        Box::new(adapters::codex::CodexAdapter::new(cwd)),
+        Box::new(adapters::gemini::GeminiAdapter::new()),
     ]
 }
 
@@ -79,6 +104,61 @@ fn main() -> ExitCode {
             unattributed,
             export,
         } => comandos::executar_costs(&store, client, period, by, unattributed, export),
+        Comando::ImportCapacity => {
+            comandos::executar_import_capacity(&store, &coletores_capacidade(cwd))
+        }
+        Comando::Capacity { provider } => comandos::executar_capacity(&store, provider),
+        Comando::Plans(ComandoPlans::List) => comandos::executar_plans_list(&store),
+        Comando::Plans(ComandoPlans::Allocation { provider, period }) => {
+            comandos::executar_plans_allocation(&store, &provider, period)
+        }
+        Comando::Connect { alvo } => comandos::executar_connect(&store, &alvo),
+        Comando::Disconnect => comandos::executar_disconnect(&store),
+        Comando::Whoami => comandos::executar_whoami(&store, &coletores_capacidade(cwd)),
+        Comando::Context(ComandoContext::List { client }) => {
+            comandos::executar_context_list(&store, &client)
+        }
+        Comando::Context(ComandoContext::Show { id }) => {
+            comandos::executar_context_show(&store, &id)
+        }
+        Comando::Context(ComandoContext::Init {
+            client,
+            project,
+            git_name,
+            git_email,
+            github_org,
+        }) => comandos::executar_context_init(
+            &store, client, project, git_name, git_email, github_org,
+        ),
+        Comando::Vault(ComandoVault::List) => comandos::executar_vault_list(&store),
+        Comando::Memory(ComandoMemory::Note { texto }) => {
+            comandos::executar_memory_note(&store, texto)
+        }
+        Comando::Memory(ComandoMemory::Decide { texto, why }) => {
+            comandos::executar_memory_decide(&store, texto, why)
+        }
+        Comando::Continuity => comandos::executar_continuity_show(&store, &cwd),
+        Comando::Handoff { provider } => comandos::executar_handoff(&store, &cwd, &provider),
+        Comando::Run {
+            tarefa,
+            provider,
+            model,
+            gate,
+            explain_only,
+        } => comandos::executar_run(
+            &store,
+            &cwd,
+            provider.as_deref(),
+            model.as_deref(),
+            &tarefa,
+            gate.as_deref(),
+            explain_only,
+        ),
+        Comando::Recover { run, all } => comandos::executar_recover(&store, run.as_deref(), all),
+        Comando::Worktree(ComandoWorktree::List) => comandos::executar_worktree_list(&store),
+        Comando::Eval(ComandoEval::Run { case, dir }) => {
+            comandos::executar_eval_run(&store, &dir, case.as_deref())
+        }
     };
 
     match resultado {

@@ -16,7 +16,11 @@
 //! aplica da mesma forma que os demais: não há arquivo de sessão sendo lido,
 //! só uma consulta de cota que o próprio `/usage` interativo também faz.
 
-use crate::domain::{BillingMode, Instante, Tokens, UsageSource};
+use super::tempo::parse_timestamp_iso8601;
+use crate::capacidade::ColetorDeCapacidade;
+use crate::domain::{
+    BillingMode, Instante, PlanoDetectado, SinalDeQuotaColetado, Tokens, UsageSource,
+};
 use crate::importacao::{ColetorDeUso, ConsumoColetado, ErroColeta, TierIntegracao};
 use crate::storage::Periodo;
 use std::process::{Child, Command};
@@ -40,6 +44,38 @@ impl GeminiAdapter {
         Self {
             executavel: "agy".to_string(),
         }
+    }
+
+    /// Invoca `agy --print "/usage"` e devolve a saída bruta — compartilhado
+    /// entre `coletar` (sinal de presença no ledger) e `consultar` (sinal de
+    /// quota fiel, capacity-windows-and-plans). `stdin` nulo sempre e
+    /// timeout explícito: mesmas duas proteções do incidente registrado no
+    /// design.md, necessárias em toda chamada a este binário, não só na
+    /// primeira que as motivou.
+    fn executar_agy(&self) -> Result<String, ErroColeta> {
+        let filho = Command::new(&self.executavel)
+            .args(["--print", "/usage", "--output-format", "json"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| ErroColeta {
+                motivo: format!("não foi possível executar `{}`: {e}", self.executavel),
+            })?;
+
+        let saida = aguardar_com_timeout(filho, TIMEOUT_AGY)?;
+
+        if !saida.status.success() {
+            return Err(ErroColeta {
+                motivo: format!(
+                    "`{}` retornou erro: {}",
+                    self.executavel,
+                    String::from_utf8_lossy(&saida.stderr)
+                ),
+            });
+        }
+
+        Ok(String::from_utf8_lossy(&saida.stdout).into_owned())
     }
 }
 
@@ -91,6 +127,9 @@ struct SinalDeConsumo {
     bucket_id: String,
     grupo: String,
     reset_time: String,
+    /// Preservado para `consultar` (task 5.1) — `coletar` não usa este
+    /// campo, só bucket_id/grupo/reset_time para o sinal de presença.
+    remaining_fraction: f64,
 }
 
 /// Extrai um sinal por bucket com `remaining_fraction < 1.0` — evidência
@@ -125,6 +164,7 @@ fn extrair_sinais(saida_json: &str) -> Vec<SinalDeConsumo> {
                 bucket_id: id.to_string(),
                 grupo: nome_grupo.to_string(),
                 reset_time: reset_time.to_string(),
+                remaining_fraction: fracao,
             });
         }
     }
@@ -145,39 +185,8 @@ impl ColetorDeUso for GeminiAdapter {
     }
 
     fn coletar(&self, periodo: Periodo) -> Result<Vec<ConsumoColetado>, ErroColeta> {
-        // stdin nulo, sempre: sem isso, um `agy` não-autenticado herda o
-        // terminal e fica esperando o usuário colar um código OAuth. E
-        // mesmo com stdin nulo, `agy` ainda espera até 60s por conta própria
-        // -- por isso o timeout explícito abaixo, não é redundante.
-        let filho = Command::new(&self.executavel)
-            .args(["--print", "/usage", "--output-format", "json"])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| ErroColeta {
-                motivo: format!("não foi possível executar `{}`: {e}", self.executavel),
-            })?;
-
-        let saida = aguardar_com_timeout(filho, TIMEOUT_AGY)?;
-
-        if !saida.status.success() {
-            return Err(ErroColeta {
-                motivo: format!(
-                    "`{}` retornou erro: {}",
-                    self.executavel,
-                    String::from_utf8_lossy(&saida.stderr)
-                ),
-            });
-        }
-
-        let stdout = String::from_utf8_lossy(&saida.stdout);
-        let agora = Instante(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0),
-        );
+        let stdout = self.executar_agy()?;
+        let agora = Instante::agora();
 
         if agora < periodo.desde || periodo.ate.is_some_and(|ate| agora >= ate) {
             return Ok(Vec::new()); // observação de agora cai fora do período pedido
@@ -204,6 +213,41 @@ impl ColetorDeUso for GeminiAdapter {
                 client_id: None,
             })
             .collect())
+    }
+}
+
+impl ColetorDeCapacidade for GeminiAdapter {
+    fn provider_id(&self) -> &str {
+        "gemini"
+    }
+
+    /// Mesma extração de `coletar` (`extrair_sinais`, task 5.1: reaproveitar,
+    /// não escrever nova), mas aqui `remaining_fraction` e `reset_time` são
+    /// preservados como sinal de quota — nada vira registro de ledger. `agy`
+    /// não expõe plano por nome; o Gemini via Antigravity é sempre
+    /// assinatura (design.md).
+    fn consultar(&self) -> Result<(PlanoDetectado, Vec<SinalDeQuotaColetado>), ErroColeta> {
+        let stdout = self.executar_agy()?;
+        let sinais = extrair_sinais(&stdout);
+
+        let janelas = sinais
+            .into_iter()
+            .map(|s| SinalDeQuotaColetado {
+                bucket_id: s.bucket_id,
+                grupo: s.grupo,
+                remaining_percent: s.remaining_fraction * 100.0,
+                reset_at: parse_timestamp_iso8601(&s.reset_time).map(Instante),
+            })
+            .collect();
+
+        Ok((
+            PlanoDetectado {
+                billing_mode: BillingMode::Subscription,
+                plan_label: None,
+                account_email: None,
+            },
+            janelas,
+        ))
     }
 }
 
@@ -288,15 +332,7 @@ mod tests {
     /// Cria um executável de mentira que só dorme — nunca toca no `agy`
     /// real nem em qualquer serviço de autenticação de verdade.
     fn script_que_dorme(segundos: u64) -> std::path::PathBuf {
-        let mut caminho = std::env::temp_dir();
-        caminho.push(format!(
-            "brian-teste-fake-agy-dorme-{}-{:?}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let caminho = crate::testutil::dir_temporario_unico("fake-agy-dorme");
         std::fs::write(&caminho, format!("#!/bin/sh\nsleep {segundos}\n")).unwrap();
         std::fs::set_permissions(
             &caminho,
@@ -307,15 +343,7 @@ mod tests {
     }
 
     fn script_que_responde(saida_json: &str) -> std::path::PathBuf {
-        let mut caminho = std::env::temp_dir();
-        caminho.push(format!(
-            "brian-teste-fake-agy-responde-{}-{:?}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let caminho = crate::testutil::dir_temporario_unico("fake-agy-responde");
         std::fs::write(
             &caminho,
             format!("#!/bin/sh\ncat <<'EOF'\n{saida_json}\nEOF\n"),
@@ -368,6 +396,44 @@ mod tests {
             .unwrap();
 
         assert_eq!(itens.len(), 2);
+
+        std::fs::remove_file(&script).ok();
+    }
+
+    #[test]
+    fn consultar_preserva_percentual_e_reset_descartados_pelo_ledger() {
+        let script = script_que_responde(FIXTURE);
+        let adapter = GeminiAdapter {
+            executavel: script.to_string_lossy().to_string(),
+        };
+
+        let (plano, sinais) = adapter.consultar().unwrap();
+        assert_eq!(plano.billing_mode, BillingMode::Subscription);
+        assert_eq!(plano.plan_label, None, "agy não expõe plano por nome");
+
+        assert_eq!(sinais.len(), 2, "mesmos 2 buckets que coletar() vê");
+        let semanal = sinais
+            .iter()
+            .find(|s| s.bucket_id == "gemini-weekly")
+            .unwrap();
+        assert_eq!(semanal.remaining_percent, 92.0);
+        assert!(
+            semanal.reset_at.is_some(),
+            "reset_time deve ser parseado para Instante"
+        );
+    }
+
+    #[test]
+    fn consultar_com_processo_que_nao_responde_falha_apos_timeout() {
+        let script = script_que_dorme(30);
+        let adapter = GeminiAdapter {
+            executavel: script.to_string_lossy().to_string(),
+        };
+
+        let inicio = Instant::now();
+        let resultado = adapter.consultar();
+        assert!(resultado.is_err());
+        assert!(inicio.elapsed() < Duration::from_secs(10));
 
         std::fs::remove_file(&script).ok();
     }

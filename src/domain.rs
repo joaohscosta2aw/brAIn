@@ -137,6 +137,20 @@ pub struct Custo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Instante(pub i64);
 
+impl Instante {
+    /// Instante atual, em segundos desde a época UTC. `unwrap_or(0)` só é
+    /// alcançável com relógio do sistema antes de 1970 — mesma tolerância já
+    /// usada em `adapters::gemini`.
+    pub fn agora() -> Self {
+        Instante(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0),
+        )
+    }
+}
+
 /// Uma chamada de provider observada. Unidade de verdade do consumo.
 #[derive(Debug, Clone)]
 pub struct UsageRecord {
@@ -174,6 +188,243 @@ impl UsageRecord {
 
         v
     }
+}
+
+/// Uma das janelas de capacidade suportadas (capacity-windows-and-plans).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TipoJanela {
+    Dia,
+    Semana,
+    Mes,
+    CicloDoPlano,
+}
+
+/// Plano detectado na fonte de um provider — o que um `ColetorDeCapacidade`
+/// devolve, antes de virar registro com vigência (essa parte é do storage).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanoDetectado {
+    pub billing_mode: BillingMode,
+    /// Identificador do plano relatado pela fonte (ex.: "pro", "plus").
+    /// `None` quando a fonte não distingue por nome.
+    pub plan_label: Option<String>,
+    /// Conta autenticada, quando a fonte relata (spec context-switching,
+    /// "Consulta do contexto ativo mostra a conta autenticada" — mostrar
+    /// *qual* conta, não só que há autenticação, é o que evita rodar
+    /// trabalho de cliente na conta errada).
+    pub account_email: Option<String>,
+}
+
+/// Um sinal de percentual restante de cota, como um `ColetorDeCapacidade` o
+/// observou — antes de virar `quota_signal` gravado.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SinalDeQuotaColetado {
+    pub bucket_id: String,
+    pub grupo: String,
+    pub remaining_percent: f64,
+    pub reset_at: Option<Instante>,
+}
+
+/// De onde veio um valor de janela de capacidade. Nunca um nível inferior
+/// apresentado com a autoridade de um superior (spec capacity-windows,
+/// "Hierarquia de fonte da capacidade").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FonteCapacidade {
+    /// Percentual/reset relatado pela fonte do próprio provider.
+    Provider,
+    /// Só o consumo medido pelo ledger está disponível — sem percentual.
+    BrianMeasured,
+}
+
+/// Estado de uma janela de capacidade de um provider, pronto para
+/// apresentação. `capacidade_tokens` fica `None` sempre que a fonte não
+/// expõe contagem absoluta (todos os providers desta change dão apenas
+/// percentual) — nunca inventado a partir do percentual.
+#[derive(Debug, Clone, PartialEq)]
+pub struct JanelaDeCapacidade {
+    pub provider_id: String,
+    pub bucket_id: String,
+    pub tipo: TipoJanela,
+    pub consumido_tokens: Option<u64>,
+    pub capacidade_tokens: Option<u64>,
+    pub used_percent: Option<f64>,
+    pub remaining_percent: Option<f64>,
+    pub resets_at: Option<Instante>,
+    pub burn_tokens_por_hora: Option<f64>,
+    pub eta_esgotamento: Option<Instante>,
+    pub fonte: FonteCapacidade,
+}
+
+/// Vínculo de um provider a um caminho de configuração isolado — o que vira
+/// variável de ambiente do processo filho (`CODEX_HOME=<config_home>`, etc.).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderBinding {
+    pub provider_id: String,
+    pub config_home: String,
+}
+
+/// Um perfil de identidade: cliente (e opcionalmente projeto), identidade Git
+/// e bindings de provider. `project = None` é o perfil "padrão" do cliente,
+/// usado quando ele só tem um projeto configurado.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PerfilIdentidade {
+    pub id: String,
+    pub client_id: String,
+    pub project: Option<String>,
+    pub git_author_name: Option<String>,
+    pub git_author_email: Option<String>,
+    pub github_org: Option<String>,
+    pub bindings: Vec<ProviderBinding>,
+}
+
+/// O contexto ativo agora — singleton (spec context-switching: "trocar
+/// contexto por construção, não por filtro").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextoAtivo {
+    pub client_id: String,
+    pub project: Option<String>,
+    pub identity_profile_id: String,
+    pub connected_at: Instante,
+}
+
+/// Classe de secret — determina exigência de autenticação biométrica na
+/// resolução (spec vault: "Classe de secret determina exigência de
+/// autenticação").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClasseSecret {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+impl ClasseSecret {
+    /// `high`/`critical` exigem Touch ID antes de liberar o valor.
+    pub fn exige_biometria(&self) -> bool {
+        matches!(self, ClasseSecret::High | ClasseSecret::Critical)
+    }
+}
+
+/// Uma credencial registrada no Vault — referência e metadados, nunca o
+/// valor (spec vault: "Só referência é persistida, nunca o valor do
+/// secret").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CredencialRegistrada {
+    pub id: String,
+    pub label: String,
+    pub keychain_service: String,
+    pub keychain_account: String,
+    pub class: ClasseSecret,
+    pub created_at: Instante,
+    pub expires_at: Option<Instante>,
+    pub last_used_at: Option<Instante>,
+    pub rotation_policy: Option<String>,
+}
+
+impl CredencialRegistrada {
+    /// `true` quando `expires_at` existe e já passou. Spec vault: "Consulta
+    /// de credencial expirada alerta, não bloqueia sem explicação" — quem
+    /// exibe a credencial decide o que fazer com isso, esta função só
+    /// responde o fato.
+    pub fn esta_expirada(&self, agora: Instante) -> bool {
+        self.expires_at.is_some_and(|exp| exp <= agora)
+    }
+}
+
+/// Categoria de uma nota de memória — como o Continuity Pack agrupa notas na
+/// apresentação (spec pack: "Pack montado a partir das notas do Context ativo").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CategoriaNota {
+    Objetivo,
+    Decisao,
+    Analise,
+    TentativaFalha,
+    ProximoPasso,
+    Nota,
+}
+
+/// Uma nota de memória, escopada por Context (`client_id` + `project`, os
+/// mesmos campos de `ContextoAtivo` — design.md: "Context de memória é
+/// (client_id, project), reaproveitado de active_context"). Append-only: não
+/// há método de edição/remoção em nenhuma camada (D-14).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotaDeMemoria {
+    pub id: String,
+    pub client_id: String,
+    pub project: Option<String>,
+    pub categoria: CategoriaNota,
+    pub texto: String,
+    /// Só preenchido para `CategoriaNota::Decisao` — spec memory-notes:
+    /// "Decisão exige o porquê".
+    pub rationale: Option<String>,
+    pub created_at: Instante,
+}
+
+/// Um arquivo alterado no repositório do Context, como `git status` relatou —
+/// nunca inventado (spec pack: "Arquivos tocados vêm do repositório real").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArquivoTocado {
+    pub path: String,
+    /// Código de duas letras do `git status --porcelain` (`" M"`, `"??"`,
+    /// `"A "`, etc.) — preservado tal como o Git relatou, sem reinterpretar.
+    pub status: String,
+}
+
+/// O Continuity Pack montado — notas agrupadas por categoria, arquivos
+/// tocados reais, aviso de orçamento quando aplicável. Nunca contém
+/// transcript bruto de provider (spec pack).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PactoDeContinuidade {
+    pub client_id: String,
+    pub project: Option<String>,
+    pub notas: Vec<NotaDeMemoria>,
+    pub arquivos_tocados: Vec<ArquivoTocado>,
+    /// `Some` quando o pack montado excede o tamanho de referência — nunca
+    /// trunca conteúdo, só sinaliza (spec pack: "Pack acima do orçamento").
+    pub aviso_orcamento: Option<String>,
+}
+
+/// Estado de um run — o primeiro subsistema do Brian que executa, não só
+/// observa (isolated-tracked-run).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusRun {
+    EmExecucao,
+    Concluido,
+    Falhou,
+    /// Processo morreu (SIGKILL não é capturável) e foi finalizado por
+    /// `brian recover` sem reexecutar a tarefa (spec orphan-recovery:
+    /// "Finalização de órfão nunca duplica custo").
+    Abandonado,
+}
+
+/// Um run: worktree isolado (D-7), persistido antes de qualquer efeito
+/// colateral (D-12). `pid` é `None` até o processo do provider existir —
+/// ausente e "processo não iniciado" são o mesmo fato aqui, não confundido
+/// com zero.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunRegistrado {
+    pub id: String,
+    pub client_id: String,
+    pub project: Option<String>,
+    pub base_commit: String,
+    pub worktree_path: String,
+    pub branch: String,
+    pub provider_id: String,
+    pub pid: Option<u32>,
+    pub status: StatusRun,
+    pub custo_equivalente: Option<Money>,
+    pub started_at: Instante,
+    pub finished_at: Option<Instante>,
+}
+
+/// Um evento do log local de um run — não OTel completo (design.md, "Log de
+/// eventos local, não OTel completo"), só o suficiente para reconstruir o
+/// que aconteceu.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EventoDeRun {
+    pub run_id: String,
+    pub tipo: String,
+    pub detalhe: Option<String>,
+    pub ocorrido_em: Instante,
 }
 
 #[cfg(test)]
@@ -284,5 +535,34 @@ mod tests {
             r.violacoes()
                 .contains(&"cost_source=unknown mas há equivalente calculado")
         );
+    }
+
+    fn credencial(expires_at: Option<Instante>) -> CredencialRegistrada {
+        CredencialRegistrada {
+            id: "c1".into(),
+            label: "teste".into(),
+            keychain_service: "brian".into(),
+            keychain_account: "xpto/c1".into(),
+            class: ClasseSecret::Low,
+            created_at: Instante(0),
+            expires_at,
+            last_used_at: None,
+            rotation_policy: None,
+        }
+    }
+
+    #[test]
+    fn credencial_sem_expiracao_nunca_esta_expirada() {
+        assert!(!credencial(None).esta_expirada(Instante(1_000_000)));
+    }
+
+    #[test]
+    fn credencial_com_expiracao_futura_nao_esta_expirada() {
+        assert!(!credencial(Some(Instante(2000))).esta_expirada(Instante(1000)));
+    }
+
+    #[test]
+    fn credencial_com_expiracao_passada_esta_expirada() {
+        assert!(credencial(Some(Instante(1000))).esta_expirada(Instante(2000)));
     }
 }
