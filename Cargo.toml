@@ -19,3 +19,8 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 serde_json = "1"
 # Blueprint especifica clap para a CLI (BRIAN-BLUEPRINT-V1.md §52.1, D-2).
 clap = { version = "4", features = ["derive"] }
+# Bindings oficiais da Apple para Security.framework (Keychain, SecAccessControl
+# biométrico) -- design.md context-and-identity-switching: preferida a invocar
+# o CLI `security` via subprocess, que vazaria segredo por argv.
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
