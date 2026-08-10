@@ -1,8 +1,12 @@
-//! Router Fase 1 (blueprint §11, D-8): regras explícitas + override manual,
-//! sem termo histórico no scoring (`n≥30` não entra na conta nesta fase).
-//! Camada fina acima de `execucao::iniciar_run` — não muda seu contrato, só
-//! decide qual `provider_id` chega até ele quando o operador não informa um.
+//! Router Fase 1 (blueprint §11, regras explícitas) + Fase 2/3 (scoring
+//! histórico, `routing/historical-scoring`) — Fase 2/3 revertida
+//! conscientemente antes de `n≥30` por célula (D-8, ver nota em
+//! `docs/DECISIONS.md` 2026-08-09); scoring nunca esconde o `n` que o
+//! sustenta. Camada fina acima de `execucao::iniciar_run` — não muda seu
+//! contrato, só decide qual `provider_id` chega até ele quando o operador
+//! não informa um.
 
+use crate::domain::RunRegistrado;
 use std::path::Path;
 
 #[derive(Debug)]
@@ -137,6 +141,87 @@ pub fn decidir_provider<'a>(
     decidir(regras, client_id, project).provider
 }
 
+/// Score de um provider candidato — `routing/historical-scoring`. `n=0`
+/// (provider sem histórico) é representado com `taxa_sucesso: 0.0` e
+/// `duracao_media_segundos: None`, tratamento conservador e declarado
+/// (design.md), nunca omitido do ranking (spec: "Provider sem histórico
+/// nenhum não é penalizado silenciosamente").
+#[derive(Debug, Clone, PartialEq)]
+pub struct Score {
+    pub provider: String,
+    pub taxa_sucesso: f64,
+    pub n: u32,
+    pub duracao_media_segundos: Option<f64>,
+}
+
+/// Calcula o score de cada `candidato` a partir de `runs` (histórico já
+/// filtrado por cliente via `Store::runs_finalizados_do_cliente` — esta
+/// função não sabe nem precisa saber de qual cliente é, spec: "Score é
+/// calculado sobre runs reais do cliente" é responsabilidade de quem chama).
+pub fn calcular_scores(runs: &[RunRegistrado], candidatos: &[&str]) -> Vec<Score> {
+    candidatos
+        .iter()
+        .map(|&provider| {
+            let do_provider: Vec<&RunRegistrado> =
+                runs.iter().filter(|r| r.provider_id == provider).collect();
+            let n = do_provider.len() as u32;
+            if n == 0 {
+                return Score {
+                    provider: provider.to_string(),
+                    taxa_sucesso: 0.0,
+                    n: 0,
+                    duracao_media_segundos: None,
+                };
+            }
+
+            let concluidos = do_provider
+                .iter()
+                .filter(|r| r.status == crate::domain::StatusRun::Concluido)
+                .count();
+            let taxa_sucesso = concluidos as f64 / n as f64;
+
+            let duracoes: Vec<i64> = do_provider
+                .iter()
+                .filter_map(|r| Some(r.finished_at?.0 - r.started_at.0))
+                .collect();
+            let duracao_media_segundos = if duracoes.is_empty() {
+                None
+            } else {
+                Some(duracoes.iter().sum::<i64>() as f64 / duracoes.len() as f64)
+            };
+
+            Score {
+                provider: provider.to_string(),
+                taxa_sucesso,
+                n,
+                duracao_media_segundos,
+            }
+        })
+        .collect()
+}
+
+/// Ranking `(taxa_sucesso desc, duracao_media asc, provider_id asc)`
+/// (design.md) — duração ausente (`None`) fica atrás de qualquer duração
+/// conhecida no desempate, mesma lógica conservadora de `n=0`.
+pub fn melhor_por_score(scores: &[Score]) -> Option<&Score> {
+    scores.iter().max_by(|a, b| {
+        a.taxa_sucesso
+            .partial_cmp(&b.taxa_sucesso)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(
+                || match (a.duracao_media_segundos, b.duracao_media_segundos) {
+                    (Some(da), Some(db)) => {
+                        db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
+                    }
+                    (Some(_), None) => std::cmp::Ordering::Greater,
+                    (None, Some(_)) => std::cmp::Ordering::Less,
+                    (None, None) => std::cmp::Ordering::Equal,
+                },
+            )
+            .then_with(|| b.provider.cmp(&a.provider))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,5 +348,83 @@ mod tests {
     fn arquivo_ausente_falha_com_erro_claro() {
         let erro = carregar_regras(Path::new("/caminho/que/nao/existe/rules.json")).unwrap_err();
         assert!(matches!(erro, ErroRouter::Json(_)));
+    }
+
+    fn run_de_teste(
+        provider: &str,
+        status: crate::domain::StatusRun,
+        started: i64,
+        finished: Option<i64>,
+    ) -> RunRegistrado {
+        RunRegistrado {
+            id: format!("run-{provider}-{started}"),
+            client_id: "xpto".into(),
+            project: None,
+            base_commit: "abc".into(),
+            worktree_path: "/tmp/x".into(),
+            branch: "brian/run".into(),
+            provider_id: provider.into(),
+            pid: None,
+            status,
+            custo_equivalente: None,
+            started_at: crate::domain::Instante(started),
+            finished_at: finished.map(crate::domain::Instante),
+        }
+    }
+
+    #[test]
+    fn taxa_de_sucesso_decide_entre_candidatos_com_historico_distinto() {
+        use crate::domain::StatusRun;
+        let runs = vec![
+            run_de_teste("codex", StatusRun::Concluido, 0, Some(10)),
+            run_de_teste("codex", StatusRun::Concluido, 0, Some(10)),
+            run_de_teste("codex", StatusRun::Falhou, 0, Some(10)),
+            run_de_teste("claude", StatusRun::Falhou, 0, Some(10)),
+        ];
+        let scores = calcular_scores(&runs, &["codex", "claude"]);
+        let melhor = melhor_por_score(&scores).unwrap();
+        assert_eq!(melhor.provider, "codex");
+        assert!((melhor.taxa_sucesso - 2.0 / 3.0).abs() < 1e-9);
+        assert_eq!(melhor.n, 3);
+    }
+
+    #[test]
+    fn empate_de_taxa_desempata_por_duracao() {
+        use crate::domain::StatusRun;
+        let runs = vec![
+            run_de_teste("rapido", StatusRun::Concluido, 0, Some(5)),
+            run_de_teste("lento", StatusRun::Concluido, 0, Some(50)),
+        ];
+        let scores = calcular_scores(&runs, &["rapido", "lento"]);
+        let melhor = melhor_por_score(&scores).unwrap();
+        assert_eq!(melhor.provider, "rapido");
+    }
+
+    #[test]
+    fn candidato_sem_historico_aparece_com_n_zero_nao_excluido() {
+        use crate::domain::StatusRun;
+        let runs = vec![run_de_teste("codex", StatusRun::Concluido, 0, Some(10))];
+        let scores = calcular_scores(&runs, &["codex", "nunca-rodou"]);
+        assert_eq!(
+            scores.len(),
+            2,
+            "candidato sem histórico não pode ser omitido"
+        );
+        let sem_historico = scores.iter().find(|s| s.provider == "nunca-rodou").unwrap();
+        assert_eq!(sem_historico.n, 0);
+        assert_eq!(sem_historico.taxa_sucesso, 0.0);
+        assert_eq!(sem_historico.duracao_media_segundos, None);
+    }
+
+    #[test]
+    fn calculo_usa_so_os_runs_passados_ja_filtrados_por_cliente() {
+        // calcular_scores não conhece client_id -- essa responsabilidade é
+        // de quem chama (Store::runs_finalizados_do_cliente, já testado em
+        // storage::sqlite). Aqui só confirmamos que a função não soma nada
+        // além do que está em `runs`.
+        use crate::domain::StatusRun;
+        let runs = vec![run_de_teste("codex", StatusRun::Concluido, 0, Some(10))];
+        let scores = calcular_scores(&runs, &["codex"]);
+        assert_eq!(scores[0].n, 1);
     }
 }
