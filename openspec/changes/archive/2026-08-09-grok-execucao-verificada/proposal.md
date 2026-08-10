@@ -34,11 +34,29 @@ servidor", nunca execução de tarefa).
 
 ## Não-objetivos
 
-- **Sem Gemini/Antigravity como execução verificada**: `agy` não tem modo
-  de execução de tarefa não-interativo — é uma sessão de agente, não um
-  CLI scriptável tipo `codex exec`/`grok -p`. Confirmado lendo o próprio
-  adapter, não testado ao vivo (não há o que testar: a capability não
-  existe). Continua coletor de consumo apenas.
+- **Sem Gemini/Antigravity como execução verificada.**
+  **[Correção 2026-08-09, mesmo dia]**: a alegação original abaixo estava
+  errada — `agy --print`/`-p` existe e é documentado exatamente como um
+  modo de execução não-interativo (`--print`, `--dangerously-skip-permissions`,
+  `--mode accept-edits`). A conclusão de que "não existe" foi tirada só do
+  comentário do adapter (`adapters/gemini.rs`), sem checar `agy --help` de
+  verdade — erro de verificação, apontado pelo autor. Testado ao vivo
+  depois: `agy -p "<tarefa>" --dangerously-skip-permissions --mode
+  accept-edits < /dev/null` **travou por mais de 6 minutos sem produzir
+  saída, sem alterar nenhum arquivo e sem gerar log novo** — passou do
+  próprio timeout documentado (`--print-timeout`, padrão 5m0s). `agy` é um
+  wrapper CLI sobre uma IDE Electron completa (Antigravity), não um
+  binário leve tipo `codex`/`grok`, o que explica o travamento em ambiente
+  headless. Conclusão final, agora testada de verdade: Gemini continua
+  fora de `PROVIDERS_EXECUCAO_VERIFICADA` — pela razão correta (travou em
+  teste real), não pela razão original (presumido sem modo scriptável).
+  Detalhe completo em `docs/DECISIONS.md`.
+
+  ~~`agy` não tem modo de execução de tarefa não-interativo — é uma sessão
+  de agente, não um CLI scriptável tipo `codex exec`/`grok -p`. Confirmado
+  lendo o próprio adapter, não testado ao vivo (não há o que testar: a
+  capability não existe). Continua coletor de consumo apenas.~~ (texto
+  original, mantido riscado para rastro — ver correção acima)
 - **Sem commit automático em nome do Grok**: `codex exec` cria commit
   próprio (por isso `execucao.rs` tem
   `aplicar_trailers_se_houver_commit_novo`); `grok -p` edita arquivos mas

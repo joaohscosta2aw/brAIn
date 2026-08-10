@@ -112,3 +112,38 @@ código — isso permanece verdade. Se no futuro fizer sentido Brian
 consumir o grafo real (ex.: para o Context Governor deixar de ser
 aproximação grosseira), isso é uma proposta separada e maior, não um
 item desta lista.
+
+## Nota — Gemini/agy testado e recusado como execução (2026-08-09)
+
+A change `grok-execucao-verificada` (arquivada no mesmo dia) originalmente
+alegou que `agy` (Gemini via Antigravity) "não tem modo de execução
+não-interativo" — conclusão tirada só do comentário de
+`adapters/gemini.rs`, sem checar `agy --help`. O autor apontou o erro
+("e o agy?"). Verificação real feita depois:
+
+```text
+agy --help mostra, sim, um modo não-interativo:
+  --print / -p                    roda um prompt único e imprime a resposta
+  --dangerously-skip-permissions  auto-aprova tudo
+  --mode accept-edits             aceita edições sem prompt
+
+Testado ao vivo contra um fixture com bug real:
+  agy -p "<tarefa>" --dangerously-skip-permissions --mode accept-edits < /dev/null
+  → travou mais de 6 minutos, sem nenhuma saída, sem alterar nenhum
+    arquivo, sem gerar log novo em ~/Library/Application Support/Antigravity/logs
+  → passou do próprio --print-timeout documentado (padrão 5m0s)
+  → processo teve que ser morto manualmente (kill -9)
+```
+
+`agy` é um wrapper CLI sobre a IDE Electron completa Antigravity (~170MB de
+binário, diretório de app support inteiro tipo VSCode), não um CLI leve
+como `codex`/`grok` — explica por que trava headless: provavelmente tenta
+inicializar infraestrutura de IDE que não sobe neste ambiente sem GUI.
+
+**Conclusão**: Gemini continua fora de `PROVIDERS_EXECUCAO_VERIFICADA` —
+agora pela razão certa (testado ao vivo, travou) em vez da razão original
+(presumido sem modo scriptável, nunca checado). Lição registrada: "não tem
+modo X" exige checar `--help`/testar, nunca só ler um comentário de código
+que fala de outra coisa (a citação original era sobre a consulta `/usage`,
+não sobre execução de tarefa — inferência indevida na hora de escrever a
+proposta).
