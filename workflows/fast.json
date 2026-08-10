@@ -1,0 +1,42 @@
+{
+  "id": "fast",
+  "version": 1,
+  "phases": [
+    {
+      "id": "implement",
+      "role": "builder",
+      "on_success": "verify",
+      "on_failure": "fail"
+    },
+    {
+      "id": "verify",
+      "role": "builder",
+      "model_pointer": "quick",
+      "gates": ["cargo build"],
+      "on_success": "done",
+      "on_failure": "fix"
+    },
+    {
+      "id": "fix",
+      "role": "builder",
+      "on_success": "verify",
+      "on_failure": "escalate",
+      "max_entries": 2,
+      "on_max_entries": "escalate"
+    },
+    {
+      "id": "escalate",
+      "terminal": true
+    },
+    {
+      "id": "fail",
+      "terminal": true
+    },
+    {
+      "id": "done",
+      "terminal": true
+    }
+  ],
+  "max_total_phases": 8,
+  "max_wall_seconds": 1800
+}
