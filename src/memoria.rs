@@ -117,7 +117,14 @@ pub fn montar_recall(
     let notas = store
         .notas_do_contexto(&contexto.client_id, contexto.project.as_deref())
         .map_err(|e| ErroRecall::Storage(e.to_string()))?;
-    let selecionadas = selecionar_para_recall(notas, orcamento);
+    // Nota já substituída nunca entra no recall junto com a que a
+    // substituiu (continuity/memory-supersede, spec: "Recall exclui
+    // notas já superseded").
+    let vigentes: Vec<_> = notas
+        .into_iter()
+        .filter(|n| n.superseded_by.is_none())
+        .collect();
+    let selecionadas = selecionar_para_recall(vigentes, orcamento);
     Ok(formatar_recall(&selecionadas))
 }
 
@@ -135,6 +142,7 @@ mod tests {
             texto: texto.into(),
             rationale: None,
             created_at: Instante(created_at),
+            superseded_by: None,
         }
     }
 
@@ -205,5 +213,48 @@ mod tests {
         assert!(saida.contains("[decisao]"));
         assert!(saida.contains("usar codex"));
         assert!(saida.contains("motivo: mais confiável"));
+    }
+
+    #[test]
+    fn montar_recall_exclui_nota_superseded() {
+        use crate::storage::sqlite::SqliteStore;
+
+        let s = SqliteStore::open(":memory:").unwrap();
+        s.migrate().unwrap();
+        s.upsert_client("xpto").unwrap();
+        crate::continuidade::registrar_nota(
+            &s,
+            Some(&contexto_teste()),
+            "n1".into(),
+            CategoriaNota::Decisao,
+            "usar claude".into(),
+            Some("mais barato".into()),
+            Instante(0),
+        )
+        .unwrap();
+        crate::continuidade::supersede(
+            &s,
+            Some(&contexto_teste()),
+            "n2".into(),
+            CategoriaNota::Decisao,
+            "usar codex".into(),
+            Some("claude ficou instável".into()),
+            "n1",
+            Instante(10),
+        )
+        .unwrap();
+
+        let recall = montar_recall(&s, &contexto_teste(), &OrcamentoRecall::default()).unwrap();
+        assert!(recall.contains("usar codex"));
+        assert!(!recall.contains("usar claude"));
+    }
+
+    fn contexto_teste() -> ContextoAtivo {
+        ContextoAtivo {
+            client_id: "xpto".into(),
+            project: None,
+            identity_profile_id: "p1".into(),
+            connected_at: Instante(0),
+        }
     }
 }

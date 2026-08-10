@@ -13,6 +13,7 @@ use crate::storage::{NovaNota, Store};
 pub enum ErroNota {
     SemContextoAtivo,
     DecisaoSemRationale,
+    NotaDeOutroContext(String),
     Storage(String),
 }
 
@@ -21,6 +22,10 @@ impl std::fmt::Display for ErroNota {
         match self {
             Self::SemContextoAtivo => write!(f, "nenhum contexto ativo"),
             Self::DecisaoSemRationale => write!(f, "decisão exige --why"),
+            Self::NotaDeOutroContext(id) => write!(
+                f,
+                "nota '{id}' não pertence ao Context ativo -- supersede recusado"
+            ),
             Self::Storage(m) => write!(f, "{m}"),
         }
     }
@@ -61,6 +66,41 @@ pub fn registrar_nota(
             created_at: agora,
         })
         .map_err(|e| ErroNota::Storage(e.to_string()))
+}
+
+/// Registra uma nota nova que substitui `supersedes_id` -- valida que a
+/// nota anterior pertence ao Context ativo *antes* de gravar qualquer
+/// coisa (spec memory-supersede: "Supersede de nota de outro Context é
+/// recusado"), grava a nota nova via `registrar_nota` reaproveitado, e só
+/// então marca a anterior. A nota anterior nunca é editada, só ganha o
+/// ponteiro (D-14).
+#[allow(clippy::too_many_arguments)]
+pub fn supersede(
+    store: &dyn Store,
+    contexto: Option<&ContextoAtivo>,
+    id: String,
+    categoria: CategoriaNota,
+    texto: String,
+    rationale: Option<String>,
+    supersedes_id: &str,
+    agora: Instante,
+) -> Result<NotaDeMemoria, ErroNota> {
+    let ctx = contexto.ok_or(ErroNota::SemContextoAtivo)?;
+
+    let notas_do_context = store
+        .notas_do_contexto(&ctx.client_id, ctx.project.as_deref())
+        .map_err(|e| ErroNota::Storage(e.to_string()))?;
+    if !notas_do_context.iter().any(|n| n.id == supersedes_id) {
+        return Err(ErroNota::NotaDeOutroContext(supersedes_id.to_string()));
+    }
+
+    let nova = registrar_nota(store, contexto, id, categoria, texto, rationale, agora)?;
+
+    store
+        .marcar_superseded(supersedes_id, &nova.id)
+        .map_err(|e| ErroNota::Storage(e.to_string()))?;
+
+    Ok(nova)
 }
 
 /// Arquivos alterados no repositório em `cwd`, via `git status --porcelain`.
@@ -296,6 +336,99 @@ mod tests {
     }
 
     #[test]
+    fn supersede_do_mesmo_context_funciona_end_to_end() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        registrar_nota(
+            &s,
+            Some(&contexto()),
+            "n1".into(),
+            CategoriaNota::Decisao,
+            "usar claude".into(),
+            Some("mais barato".into()),
+            Instante(0),
+        )
+        .unwrap();
+
+        let nova = supersede(
+            &s,
+            Some(&contexto()),
+            "n2".into(),
+            CategoriaNota::Decisao,
+            "usar codex".into(),
+            Some("claude ficou instável".into()),
+            "n1",
+            Instante(10),
+        )
+        .unwrap();
+        assert_eq!(nova.id, "n2");
+
+        let notas = s.notas_do_contexto("xpto", Some("checkout-api")).unwrap();
+        let anterior = notas.iter().find(|n| n.id == "n1").unwrap();
+        assert_eq!(anterior.texto, "usar claude");
+        assert_eq!(anterior.superseded_by.as_deref(), Some("n2"));
+    }
+
+    #[test]
+    fn supersede_de_nota_de_outro_context_e_recusado_sem_gravar_nada() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.upsert_client("acme").unwrap();
+        registrar_nota(
+            &s,
+            Some(&ContextoAtivo {
+                client_id: "acme".into(),
+                project: None,
+                identity_profile_id: "p2".into(),
+                connected_at: Instante(0),
+            }),
+            "n1".into(),
+            CategoriaNota::Nota,
+            "nota da acme".into(),
+            None,
+            Instante(0),
+        )
+        .unwrap();
+
+        let erro = supersede(
+            &s,
+            Some(&contexto()),
+            "n2".into(),
+            CategoriaNota::Nota,
+            "tentativa cruzando context".into(),
+            None,
+            "n1",
+            Instante(10),
+        )
+        .unwrap_err();
+        assert!(matches!(erro, ErroNota::NotaDeOutroContext(_)));
+
+        let notas_xpto = s.notas_do_contexto("xpto", Some("checkout-api")).unwrap();
+        assert!(
+            notas_xpto.is_empty(),
+            "nenhuma nota nova deveria ter sido gravada"
+        );
+    }
+
+    #[test]
+    fn supersede_de_id_inexistente_e_recusado() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        let erro = supersede(
+            &s,
+            Some(&contexto()),
+            "n2".into(),
+            CategoriaNota::Nota,
+            "texto".into(),
+            None,
+            "fantasma",
+            Instante(0),
+        )
+        .unwrap_err();
+        assert!(matches!(erro, ErroNota::NotaDeOutroContext(_)));
+    }
+
+    #[test]
     fn arquivos_tocados_de_diretorio_sem_git_e_vazio() {
         let dir = crate::testutil::dir_temporario_unico("sem-git");
         std::fs::create_dir_all(&dir).unwrap();
@@ -365,6 +498,7 @@ mod tests {
                 texto: "objetivo".into(),
                 rationale: None,
                 created_at: Instante(0),
+                superseded_by: None,
             },
             NotaDeMemoria {
                 id: "n2".into(),
@@ -374,6 +508,7 @@ mod tests {
                 texto: "decisão".into(),
                 rationale: Some("motivo".into()),
                 created_at: Instante(1),
+                superseded_by: None,
             },
         ];
         let pacote = montar_pacote(&ctx, notas, Vec::new());
@@ -397,6 +532,7 @@ mod tests {
             texto: "x".repeat(ORCAMENTO_CARACTERES + 1),
             rationale: None,
             created_at: Instante(0),
+            superseded_by: None,
         };
         let pacote = montar_pacote(&contexto(), vec![nota], Vec::new());
         assert!(pacote.aviso_orcamento.is_some());
@@ -482,6 +618,7 @@ mod tests {
                 texto: "tornar refund idempotente".into(),
                 rationale: None,
                 created_at: Instante(0),
+                superseded_by: None,
             }],
             arquivos_tocados: vec![ArquivoTocado {
                 path: "src/payment/RefundService.ts".into(),
