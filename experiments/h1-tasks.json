@@ -1,0 +1,72 @@
+[
+  {
+    "id": "h1-01",
+    "description": "Corrige off-by-one em paginação (sintética)",
+    "tipo": "bug_pequeno",
+    "fixture_repo": "fixtures/h1/h1-01",
+    "task": "Corrija o off-by-one no cálculo de offset da paginação em src/pagination.rs."
+  },
+  {
+    "id": "h1-02",
+    "description": "Torna idempotente uma operação de refund (sintética)",
+    "tipo": "bug_pequeno",
+    "fixture_repo": "fixtures/h1/h1-02",
+    "task": "Torne a operação de refund em src/refund.rs idempotente para o mesmo idempotency_key."
+  },
+  {
+    "id": "h1-03",
+    "description": "Corrige vazamento de conexão não fechada (sintética)",
+    "tipo": "bug_pequeno",
+    "fixture_repo": "fixtures/h1/h1-03",
+    "task": "Corrija o vazamento de conexão de banco que não é fechada no caminho de erro em src/db.rs."
+  },
+  {
+    "id": "h1-04",
+    "description": "Adiciona endpoint de listagem paginada (sintética)",
+    "tipo": "feature_media",
+    "fixture_repo": "fixtures/h1/h1-04",
+    "task": "Adicione um endpoint GET /orders que retorna pedidos paginados por cursor."
+  },
+  {
+    "id": "h1-05",
+    "description": "Adiciona validação de CPF no cadastro (sintética)",
+    "tipo": "feature_media",
+    "fixture_repo": "fixtures/h1/h1-05",
+    "task": "Adicione validação de CPF (dígito verificador) ao formulário de cadastro de cliente."
+  },
+  {
+    "id": "h1-06",
+    "description": "Adiciona retry com backoff a um client HTTP (sintética)",
+    "tipo": "feature_media",
+    "fixture_repo": "fixtures/h1/h1-06",
+    "task": "Adicione retry com backoff exponencial ao client HTTP de notificações em src/notifier.rs."
+  },
+  {
+    "id": "h1-07",
+    "description": "Extrai lógica de cálculo de frete duplicada (sintética)",
+    "tipo": "refactor",
+    "fixture_repo": "fixtures/h1/h1-07",
+    "task": "Extraia a lógica de cálculo de frete duplicada em três handlers para uma função compartilhada."
+  },
+  {
+    "id": "h1-08",
+    "description": "Divide um módulo grande em submódulos (sintética)",
+    "tipo": "refactor",
+    "fixture_repo": "fixtures/h1/h1-08",
+    "task": "Divida o módulo checkout.rs em submódulos por responsabilidade, sem mudar comportamento."
+  },
+  {
+    "id": "h1-09",
+    "description": "Substitui parsing manual por biblioteca já presente (sintética)",
+    "tipo": "refactor",
+    "fixture_repo": "fixtures/h1/h1-09",
+    "task": "Substitua o parsing manual de datas em src/dates.rs pela crate chrono já usada no projeto."
+  },
+  {
+    "id": "h1-10",
+    "description": "Corrige condição de corrida em cache em memória (sintética)",
+    "tipo": "bug_pequeno",
+    "fixture_repo": "fixtures/h1/h1-10",
+    "task": "Corrija a condição de corrida no cache em memória de src/cache.rs sob acesso concorrente."
+  }
+]
