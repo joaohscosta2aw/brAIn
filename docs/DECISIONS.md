@@ -94,3 +94,21 @@ D-16 (v0.0) → D-17 mínimo (v0.1) → run/worktree (v0.2) → resto
 | **OP-8** | Poucas indas e vindas |
 
 OpenSpec e código que violem OP-1…OP-8 ou D-16/D-17 são rejeitados por premissa.
+
+## Nota — grafo de código real (§21-25) fica fora do Brian (2026-08-09)
+
+O blueprint (§21-25) descreve um grafo de código real como fonte para
+contexto agêntico. Esse grafo já existe neste ambiente — MCP
+`code-review-graph`/skill Graphify, já documentado em `AGENTS.md` como
+ferramenta disponível ao assistente — mas é uma ferramenta do *harness do
+assistente*, não algo que o binário `brian` (Rust, CLI standalone) chama
+programaticamente. Fazer Brian consumir isso exigiria Brian virar cliente
+MCP, uma capability nova e não trivial, não uma integração pequena.
+
+Decisão: não duplicar essa skill dentro do Brian nem fingir integração
+que não existe. `context_governor.rs` (H-1) continua declarando
+explicitamente que só usa `grep`/`git log`/memória, nunca um grafo de
+código — isso permanece verdade. Se no futuro fizer sentido Brian
+consumir o grafo real (ex.: para o Context Governor deixar de ser
+aproximação grosseira), isso é uma proposta separada e maior, não um
+item desta lista.
