@@ -14,16 +14,26 @@
 | **D-5** | Context Governor é hipótese (H-1), não pilar. Nada depende dele. | H-1 confirma ≥30% redução de $/change bem-sucedido. |
 | **D-6** | Custo reportado pelo provider > price catalog (catalog rotulado). | Nenhum. |
 | **D-7** | Todo run orquestrado em git worktree dedicado. | Nenhum (pré-requisito de concorrência). |
-| **D-8** | Router por regras + override até n≥30 por célula; depois evals. | Limiar + harness de eval funcionando. |
+| **D-8** | ~~Router por regras + override até n≥30 por célula; depois evals.~~ **[Δ 2026-08-09]** Revertida antecipadamente por decisão consciente do autor — scoring histórico entra no código antes de haver `n≥30` reais por célula. Risco aceito e assumido: "confiança injustificada" nas próprias palavras do blueprint §11.1 até o volume real de uso chegar lá. | ~~Limiar + harness de eval funcionando.~~ Reversão consumida. |
 | **D-9** | SQL só em `storage/` via traits. | Nenhum. |
 | **D-10** | Brian não orquestra inner loop de um provider. Só N providers / M clientes. | Nenhum (definição de produto). |
 | **D-11** | Runtime = “Brian Core”. Termo “Brain” proibido. | Nenhum. |
 | **D-12** | Persistir estado do run antes de qualquer efeito colateral externo. | Nenhum. |
-| **D-13** | Roteamento adaptativo só depois do harness de eval. | Nenhum. |
+| **D-13** | ~~Roteamento adaptativo só depois do harness de eval.~~ **[Δ 2026-08-09]** Revertida antecipadamente junto com D-8 — mesma decisão consciente, mesmo risco assumido. | Reversão consumida. |
 | **D-14** | Memória append-only com proveniência; correção supersede. | Nenhum. |
 | **D-15** | MCP do Brian = único path de escrita de workflow *por agentes*. Core é writer. | Nenhum. |
 | **D-16** | **Zero token perdido.** Usage Control no minuto 0: ledger, janelas, %, restante, burn, assinatura, atribuição, otimização de centavo. | Nenhum. Lei do produto. |
 | **D-17** | **Continuidade multi-LLM.** Continuity Pack + memória do Brian; handoff sem reexplicar. | Nenhum. Lei do produto (mínimo no v0.1). |
+
+### Nota — reversão antecipada de D-8/D-13 (2026-08-09)
+
+O autor pediu explicitamente, ciente do trade-off, que Router Fase 2/3 e Learning
+Engine entrassem em código antes de existir `n≥30` runs reais por célula —
+confirmado duas vezes após eu apontar que isso contraria a trava original.
+Consequência prática: qualquer scoring histórico/aprendizado que existir no
+código a partir daqui não tem base estatística real ainda. Tratar como
+"aposta instrumentada", não como fato — o próprio blueprint (§11.1) chama isso
+de "confiança injustificada" enquanto o volume de uso real não chega lá.
 
 ## Hipóteses (não são leis)
 

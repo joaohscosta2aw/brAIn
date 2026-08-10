@@ -9,9 +9,11 @@
 pub mod sqlite;
 
 use crate::domain::{
-    BillingMode, CategoriaNota, ClasseSecret, ContextoAtivo, CostSource, CredencialRegistrada,
-    EventoDeRun, Instante, Money, NotaDeMemoria, PerfilIdentidade, ProviderBinding, RunRegistrado,
-    StatusRun, Tokens, UsageRecord, UsageSource,
+    BillingMode, CandidatoComparacao, CategoriaNota, ClasseSecret, ComparacaoRegistrada,
+    ContextoAtivo, CostSource, CredencialRegistrada, EntradaDeFase, EventoDeRun,
+    ExecucaoExperimento, Instante, Money, NotaDeMemoria, PerfilIdentidade, ProviderBinding,
+    RunRegistrado, StatusRun, StatusWorkflowRun, Tokens, UsageRecord, UsageSource,
+    WorkflowRunRegistrado,
 };
 use std::fmt;
 
@@ -360,9 +362,78 @@ pub trait Store {
     /// junto aos ativos (task 7.3).
     fn runs_abandonados(&self) -> Result<Vec<RunRegistrado>>;
 
+    /// Runs `Concluido` ou `Falhou` de um cliente — histórico que alimenta
+    /// `routing/historical-scoring` (nunca de outro cliente, spec: "Score é
+    /// calculado sobre runs reais do cliente").
+    fn runs_finalizados_do_cliente(&self, client_id: &str) -> Result<Vec<RunRegistrado>>;
+
     fn registrar_evento_run(&self, novo: NovoEvento) -> Result<()>;
 
     fn eventos_do_run(&self, run_id: &str) -> Result<Vec<EventoDeRun>>;
+
+    /// Grava o workflow_run — antes de qualquer fase rodar (D-12).
+    fn criar_workflow_run(&self, novo: NovoWorkflowRun) -> Result<WorkflowRunRegistrado>;
+
+    fn workflow_run(&self, id: &str) -> Result<Option<WorkflowRunRegistrado>>;
+
+    /// Atualiza fase atual, status, motivo de pausa, total de fases e,
+    /// quando aplicável, `finished_at`.
+    #[allow(clippy::too_many_arguments)]
+    fn atualizar_workflow_run(
+        &self,
+        id: &str,
+        current_phase: &str,
+        status: StatusWorkflowRun,
+        pause_reason: Option<&str>,
+        total_phases: i64,
+        finished_at: Option<Instante>,
+    ) -> Result<()>;
+
+    fn registrar_entrada_fase(&self, nova: NovaEntradaDeFase) -> Result<EntradaDeFase>;
+
+    /// Fecha uma entrada de fase já registrada com o outcome e `ended_at`.
+    fn concluir_entrada_fase(
+        &self,
+        entrada_id: &str,
+        outcome: &str,
+        ended_at: Instante,
+    ) -> Result<()>;
+
+    /// Histórico de fases de um workflow_run, em ordem (blueprint §15.6:
+    /// phase_history).
+    fn entradas_do_workflow_run(&self, workflow_run_id: &str) -> Result<Vec<EntradaDeFase>>;
+
+    /// Grava a comparação — antes de qualquer candidato rodar (D-12).
+    fn criar_comparacao(&self, nova: NovaComparacao) -> Result<ComparacaoRegistrada>;
+
+    fn comparacao(&self, id: &str) -> Result<Option<ComparacaoRegistrada>>;
+
+    fn registrar_candidato_comparacao(
+        &self,
+        novo: NovoCandidatoComparacao,
+    ) -> Result<CandidatoComparacao>;
+
+    fn candidatos_da_comparacao(&self, comparacao_id: &str) -> Result<Vec<CandidatoComparacao>>;
+
+    /// Só grava `vencedor_provider_id` — spec: "Escolha do vencedor é
+    /// sempre uma ação explícita separada".
+    fn definir_vencedor_comparacao(
+        &self,
+        comparacao_id: &str,
+        provider_id: &str,
+        finished_at: Instante,
+    ) -> Result<()>;
+
+    /// Grava uma execução do experimento H-1 -- liga case_id + braço ao
+    /// `run` real que os executou.
+    fn registrar_execucao_experimento(
+        &self,
+        nova: NovaExecucaoExperimento,
+    ) -> Result<ExecucaoExperimento>;
+
+    /// Todas as execuções do experimento, opcionalmente filtradas por
+    /// braço.
+    fn execucoes_do_experimento(&self, braco: Option<&str>) -> Result<Vec<ExecucaoExperimento>>;
 }
 
 /// Um run a criar — `status` sempre nasce `EmExecucao`, `pid`/`finished_at`/
@@ -387,6 +458,61 @@ pub struct NovoEvento {
     pub tipo: String,
     pub detalhe: Option<String>,
     pub ocorrido_em: Instante,
+}
+
+/// Um workflow_run a gravar — persistido antes de qualquer fase rodar
+/// (D-12, mesma disciplina de `NovoRun`).
+#[derive(Debug, Clone)]
+pub struct NovoWorkflowRun {
+    pub id: String,
+    pub client_id: String,
+    pub project: Option<String>,
+    pub workflow_id: String,
+    pub workflow_version: i64,
+    pub definicao_json: String,
+    pub tarefa: String,
+    pub current_phase: String,
+    pub started_at: Instante,
+}
+
+/// Uma entrada de fase a gravar.
+#[derive(Debug, Clone)]
+pub struct NovaEntradaDeFase {
+    pub id: String,
+    pub workflow_run_id: String,
+    pub phase_id: String,
+    pub run_id: Option<String>,
+    pub entrada_numero: i64,
+    pub started_at: Instante,
+}
+
+/// Uma comparação a criar — `vencedor_provider_id` sempre nasce ausente.
+#[derive(Debug, Clone)]
+pub struct NovaComparacao {
+    pub id: String,
+    pub client_id: String,
+    pub project: Option<String>,
+    pub tarefa: String,
+    pub started_at: Instante,
+}
+
+/// Um candidato de comparação a gravar.
+#[derive(Debug, Clone)]
+pub struct NovoCandidatoComparacao {
+    pub id: String,
+    pub comparacao_id: String,
+    pub provider_id: String,
+    pub run_id: Option<String>,
+}
+
+/// Uma execução do experimento H-1 a gravar.
+#[derive(Debug, Clone)]
+pub struct NovaExecucaoExperimento {
+    pub id: String,
+    pub case_id: String,
+    pub braco: String,
+    pub run_id: String,
+    pub started_at: Instante,
 }
 
 /// Uma nota de memória a gravar.

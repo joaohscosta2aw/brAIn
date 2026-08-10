@@ -100,8 +100,13 @@ pub enum Comando {
         /// Sem isso, o provider é decidido por regra.
         #[arg(long)]
         provider: Option<String>,
+        /// Nome concreto de modelo. Vence `--model-pointer` sem exceção.
         #[arg(long)]
         model: Option<String>,
+        /// Ponteiro semântico (coding/reasoning/quick/...) resolvido via
+        /// `models/pointers.json` — ignorado se `--model` for informado.
+        #[arg(long)]
+        model_pointer: Option<String>,
         /// Comando shell rodado no worktree após o provider — só conclui o
         /// run se sair com sucesso.
         #[arg(long)]
@@ -110,6 +115,15 @@ pub enum Comando {
         /// worktree nem invocar provider nenhum.
         #[arg(long)]
         explain_only: bool,
+        /// Decide o provider por score histórico (routing/historical-scoring)
+        /// em vez de regra — ignorado se `--provider` for explícito.
+        #[arg(long)]
+        scored: bool,
+        /// Lista de providers separados por vírgula — roda a mesma tarefa
+        /// em cada um (evaluation/paired-comparison). Mutuamente exclusivo
+        /// com --provider/--model-pointer/--scored.
+        #[arg(long)]
+        compare: Option<String>,
     },
     /// Lista runs órfãos e finaliza (nunca reexecuta) — `--run <id>` ou `--all`.
     Recover {
@@ -124,6 +138,22 @@ pub enum Comando {
     /// Harness de eval (pré-requisito de D-13).
     #[command(subcommand)]
     Eval(ComandoEval),
+    /// Auditoria do router (routing/historical-scoring).
+    #[command(subcommand)]
+    Router(ComandoRouter),
+    /// Máquina de estados de fases (workflow-engine, blueprint §15).
+    #[command(subcommand)]
+    Workflow(ComandoWorkflow),
+    /// Comparação pareada (evaluation/paired-comparison, blueprint §38.4).
+    #[command(subcommand)]
+    Compare(ComandoCompare),
+    /// Experimento H-1 do Context Governor (context/governor-experiment,
+    /// blueprint §18.3).
+    #[command(subcommand)]
+    Experiment(ComandoExperiment),
+    /// Orçamento mensal por cliente (capacity/budget-alerts, blueprint §45).
+    #[command(subcommand)]
+    Budget(ComandoBudget),
 }
 
 #[derive(Subcommand)]
@@ -144,6 +174,77 @@ pub enum ComandoEval {
 }
 
 #[derive(Subcommand)]
+pub enum ComandoRouter {
+    /// Mostra o score histórico de cada provider verificado para o cliente
+    /// ativo — mesmo cálculo de `brian run --scored`, sem decidir nada.
+    Score {
+        /// Restringe a um único provider; sem isso, mostra todos.
+        #[arg(long)]
+        provider: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ComandoWorkflow {
+    /// Roda um workflow até bater fase terminal, limite, ou pausa por
+    /// aprovação.
+    Run {
+        /// Id do workflow (`workflows/<id>.json`); sem isso, usa "fast".
+        workflow_id: Option<String>,
+        tarefa: String,
+        #[arg(long)]
+        scored: bool,
+    },
+    /// Retoma um workflow_run pausado por `requires_approval`.
+    Approve {
+        workflow_run_id: String,
+        #[arg(long)]
+        scored: bool,
+    },
+    /// Fase atual, status e histórico de fases de um workflow_run.
+    Show { workflow_run_id: String },
+}
+
+#[derive(Subcommand)]
+pub enum ComandoCompare {
+    /// Registra a escolha do operador entre os candidatos de uma
+    /// comparação — nunca decide sozinho, nunca reexecuta nada.
+    Choose {
+        comparacao_id: String,
+        #[arg(long)]
+        winner: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ComandoExperiment {
+    /// Roda um case em um braço (A/B/C) do experimento H-1.
+    RunH1 {
+        #[arg(long = "case")]
+        case_id: String,
+        #[arg(long = "arm")]
+        arm: String,
+        #[arg(long, default_value = "experiments/h1-tasks.json")]
+        file: PathBuf,
+    },
+    /// Relatório agregado do experimento H-1: taxa e duração por braço,
+    /// sempre com `n` e a nota de limitação de métrica.
+    ReportH1,
+}
+
+#[derive(Subcommand)]
+pub enum ComandoBudget {
+    /// Gasto do mês corrente vs orçamento configurado em
+    /// `budgets/clients.json` — gasto e limite sempre lado a lado.
+    Check {
+        #[arg(long)]
+        client: String,
+        #[arg(long, default_value = "budgets/clients.json")]
+        file: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum ComandoMemory {
     /// Registra uma nota simples.
     Note { texto: String },
@@ -153,6 +254,9 @@ pub enum ComandoMemory {
         #[arg(long)]
         why: String,
     },
+    /// Mostra exatamente o que seria anexado à tarefa de um `brian run`
+    /// para o Context ativo (continuity/memory-recall).
+    Recall,
 }
 
 #[derive(Subcommand)]
@@ -567,6 +671,78 @@ pub fn executar_costs(
     }
 
     Err("informe --client, --by, --unattributed ou --export".to_string())
+}
+
+/// `brian budget check --client <id>` — mesma fonte de dado de `brian
+/// costs --client` (`consumo_do_cliente` do mês corrente + `agregar`),
+/// comparada ao orçamento configurado em `budgets/clients.json`.
+pub fn executar_budget_check(
+    store: &dyn Store,
+    budgets_path: &std::path::Path,
+    client_id: &str,
+) -> Result<String, String> {
+    let existe = store.client_exists(client_id).map_err(|e| e.to_string())?;
+    if !existe {
+        return Err(format!("cliente '{client_id}' não existe"));
+    }
+
+    let registros = store
+        .consumo_do_cliente(client_id, periodo_mes_atual())
+        .map_err(|e| e.to_string())?;
+    let a = agregar(&registros);
+    let gasto_tokens: u64 = registros.iter().map(|r| r.tokens.total_conhecido()).sum();
+
+    let budgets = crate::budget::carregar_budgets(budgets_path).map_err(|e| e.to_string())?;
+    let status = crate::budget::calcular_status(
+        client_id,
+        budgets.get(client_id),
+        a.equivalente.map(Money),
+        gasto_tokens,
+    );
+
+    Ok(formatar_status_budget(&status))
+}
+
+fn formatar_status_budget(status: &crate::budget::StatusBudget) -> String {
+    let Some(limite_usd) = status.limite_usd else {
+        if status.limite_tokens.is_none() {
+            return format!("cliente: {} — sem orçamento configurado", status.client_id);
+        }
+        return format!(
+            "cliente: {}\ngasto (tokens): {}\nlimite (tokens): {}\n{}",
+            status.client_id,
+            status.gasto_tokens,
+            status.limite_tokens.unwrap(),
+            if status.limite_excedido {
+                "LIMITE EXCEDIDO"
+            } else {
+                "dentro do limite"
+            }
+        );
+    };
+
+    let mut linhas = vec![
+        format!("cliente: {}", status.client_id),
+        format!("gasto (equivalente): {}", fmt_opt_money(status.gasto_usd)),
+        format!("limite (mensal): {limite_usd}"),
+    ];
+    if !status.alertas_cruzados.is_empty() {
+        linhas.push(format!(
+            "alertas cruzados: {}",
+            status
+                .alertas_cruzados
+                .iter()
+                .map(|p| format!("{p}%"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    linhas.push(if status.limite_excedido {
+        "LIMITE EXCEDIDO".to_string()
+    } else {
+        "dentro do limite".to_string()
+    });
+    linhas.join("\n")
 }
 
 // --- Capacidade (grupos 8/9) --------------------------------------------
@@ -1042,6 +1218,28 @@ pub fn executar_memory_decide(
     Ok(format!("decisão registrada: {}", nota.id))
 }
 
+/// `brian memory recall` -- mesma função (`memoria::montar_recall`)
+/// reaproveitada por `montar_tarefa_com_recall`, garante por construção
+/// que o que aparece aqui é o que seria anexado a um `brian run` (spec:
+/// "Recall exibido é idêntico ao que seria injetado").
+pub fn executar_memory_recall(store: &dyn Store) -> Result<String, String> {
+    let contexto = store
+        .contexto_ativo()
+        .map_err(|e| e.to_string())?
+        .ok_or("nenhum contexto ativo")?;
+    let recall = crate::memoria::montar_recall(
+        store,
+        &contexto,
+        &crate::memoria::OrcamentoRecall::default(),
+    )
+    .map_err(|e| e.to_string())?;
+    if recall.is_empty() {
+        Ok("nenhuma nota registrada para este Context".to_string())
+    } else {
+        Ok(recall)
+    }
+}
+
 pub fn executar_continuity_show(
     store: &dyn Store,
     cwd: &std::path::Path,
@@ -1068,7 +1266,7 @@ pub fn executar_handoff(
 ///
 /// Devolve `(provider, origem)` — `origem` é `None` para override explícito,
 /// ou a explicação da regra/`default` para `--explain-only`.
-fn resolver_provider(
+pub(crate) fn resolver_provider(
     store: &dyn Store,
     cwd: &std::path::Path,
     provider: Option<&str>,
@@ -1094,33 +1292,275 @@ fn resolver_provider(
     Ok((decisao.provider.to_string(), Some(origem)))
 }
 
+/// Resolve o provider por score histórico (`routing/historical-scoring`) em
+/// vez de regra — só ativa com `--scored` (spec: "Sem --scored usa só
+/// regra"). Candidatos são todos os providers com execução verificada
+/// (`execucao::PROVIDERS_EXECUCAO_VERIFICADA`) — a regra Fase 1 nunca produz
+/// mais de um candidato pra desempatar entre si, então `--scored` substitui
+/// a decisão por regra inteira, não desempata dentro dela (design.md).
+///
+/// Devolve `(provider_vencedor, origem, todos_os_scores)` — os scores
+/// completos alimentam `--explain-only` (spec: "Decisão por score nunca
+/// esconde o tamanho da base").
+pub(crate) fn resolver_provider_por_score(
+    store: &dyn Store,
+) -> Result<(String, String, Vec<router::Score>), String> {
+    let contexto = store
+        .contexto_ativo()
+        .map_err(|e| e.to_string())?
+        .ok_or("nenhum contexto ativo")?;
+    let runs = store
+        .runs_finalizados_do_cliente(&contexto.client_id)
+        .map_err(|e| e.to_string())?;
+    let scores = router::calcular_scores(&runs, execucao::PROVIDERS_EXECUCAO_VERIFICADA);
+    let melhor = router::melhor_por_score(&scores).ok_or("nenhum provider candidato para score")?;
+    let origem = format!(
+        "score (taxa={:.0}%, n={})",
+        melhor.taxa_sucesso * 100.0,
+        melhor.n
+    );
+    let provider = melhor.provider.clone();
+    Ok((provider, origem, scores))
+}
+
+/// Resolve o modelo de um run: override explícito (`--model`) sempre vence,
+/// sem consultar pointer nenhum (spec model-pointers: "Override explícito de
+/// modelo vence o ponteiro"). Sem `--model` e com `--model-pointer`, resolve
+/// via `model_router` restrito ao `provider_id` já decidido pelo Provider
+/// Router — o pointer nunca escolhe um provider diferente do já decidido
+/// (design.md: "respeitando o que routing/provider-rules já decidiu").
+///
+/// Devolve `(modelo, origem)` — `origem` só existe quando veio de pointer,
+/// para `--explain-only`.
+pub(crate) fn resolver_modelo(
+    cwd: &std::path::Path,
+    provider_id: &str,
+    model: Option<&str>,
+    model_pointer: Option<&str>,
+) -> Result<(Option<String>, Option<String>), String> {
+    if let Some(m) = model {
+        return Ok((Some(m.to_string()), None));
+    }
+    let Some(pointer) = model_pointer else {
+        return Ok((None, None));
+    };
+
+    let pointers = crate::model_router::carregar_pointers(&cwd.join("models/pointers.json"))
+        .map_err(|e| e.to_string())?;
+    let modelos =
+        crate::model_router::carregar_modelos(&cwd.join("providers")).map_err(|e| e.to_string())?;
+    let (_, modelo, aviso) =
+        crate::model_router::resolver_pointer(&pointers, &modelos, &[provider_id], pointer)
+            .map_err(|e| e.to_string())?;
+
+    if let Some(a) = &aviso {
+        eprintln!(
+            "aviso: pointer '{pointer}' pediu tier '{}', usando '{}' (mais próximo disponível para {provider_id})",
+            a.tier_pedido, a.tier_usado
+        );
+    }
+
+    Ok((Some(modelo), Some(format!("pointer '{pointer}'"))))
+}
+
+/// Argumentos de `brian run` que não são infraestrutura (`store`/`cwd`) —
+/// agrupados só para não estourar o limite de argumentos do clippy (mesma
+/// razão de `execucao::PedidoRun`).
+pub struct ArgsRun<'a> {
+    pub provider: Option<&'a str>,
+    pub model: Option<&'a str>,
+    pub model_pointer: Option<&'a str>,
+    pub tarefa: &'a str,
+    pub gate: Option<&'a str>,
+    pub explain_only: bool,
+    pub scored: bool,
+    /// Lista de providers separados por vírgula. Mutuamente exclusivo com
+    /// `provider`/`model_pointer`/`scored` — comparação decide o conjunto
+    /// de providers explicitamente, não delega a regra/score (design.md).
+    pub compare: Option<&'a str>,
+}
+
+/// Recusa iniciar um run se o orçamento mensal do cliente já foi atingido
+/// -- checado antes de qualquer chamada a `execucao::iniciar_run` (spec
+/// budget-alerts: "Limite duro recusa novo run antes de qualquer efeito
+/// colateral"). Cliente sem entrada em `budgets/clients.json` nunca é
+/// bloqueado (spec: "Cliente sem orçamento configurado nunca é bloqueado
+/// nem alertado").
+fn checar_orcamento(
+    store: &dyn Store,
+    cwd: &std::path::Path,
+    client_id: &str,
+) -> Result<(), String> {
+    let budgets = crate::budget::carregar_budgets(&cwd.join("budgets").join("clients.json"))
+        .map_err(|e| e.to_string())?;
+    let Some(budget) = budgets.get(client_id) else {
+        return Ok(());
+    };
+
+    let registros = store
+        .consumo_do_cliente(client_id, periodo_mes_atual())
+        .map_err(|e| e.to_string())?;
+    let a = agregar(&registros);
+    let gasto_tokens: u64 = registros.iter().map(|r| r.tokens.total_conhecido()).sum();
+
+    let status = crate::budget::calcular_status(
+        client_id,
+        Some(budget),
+        a.equivalente.map(Money),
+        gasto_tokens,
+    );
+    if status.limite_excedido {
+        return Err(format!(
+            "orçamento mensal excedido para cliente '{client_id}': gasto {} (equivalente), {} tokens -- limite {}, {} tokens",
+            fmt_opt_money(status.gasto_usd),
+            status.gasto_tokens,
+            status
+                .limite_usd
+                .map(|m| m.to_string())
+                .unwrap_or_else(|| "—".to_string()),
+            status
+                .limite_tokens
+                .map(|t| t.to_string())
+                .unwrap_or_else(|| "—".to_string()),
+        ));
+    }
+    Ok(())
+}
+
+/// Anexa o recall de memória (continuity/memory-recall) à tarefa, quando o
+/// Context ativo tem notas -- sem alteração alguma quando não tem (spec:
+/// "Context sem notas não altera a tarefa enviada ao provider").
+fn montar_tarefa_com_recall(
+    store: &dyn Store,
+    contexto: Option<&crate::domain::ContextoAtivo>,
+    tarefa: &str,
+) -> Result<String, String> {
+    let Some(ctx) = contexto else {
+        return Ok(tarefa.to_string());
+    };
+    let recall =
+        crate::memoria::montar_recall(store, ctx, &crate::memoria::OrcamentoRecall::default())
+            .map_err(|e| e.to_string())?;
+    Ok(if recall.is_empty() {
+        tarefa.to_string()
+    } else {
+        format!("{tarefa}\n\n{recall}")
+    })
+}
+
 pub fn executar_run(
     store: &dyn Store,
     cwd: &std::path::Path,
-    provider: Option<&str>,
-    model: Option<&str>,
-    tarefa: &str,
-    gate: Option<&str>,
-    explain_only: bool,
+    args: ArgsRun,
 ) -> Result<String, String> {
-    let (provider_id, origem) = resolver_provider(store, cwd, provider)?;
+    let ArgsRun {
+        provider,
+        model,
+        model_pointer,
+        tarefa,
+        gate,
+        explain_only,
+        scored,
+        compare,
+    } = args;
+
+    if let Some(lista) = compare {
+        if provider.is_some() || model_pointer.is_some() || scored {
+            return Err(
+                "--compare é mutuamente exclusivo com --provider/--model-pointer/--scored"
+                    .to_string(),
+            );
+        }
+        let providers: Vec<&str> = lista.split(',').map(str::trim).collect();
+        let contexto = store.contexto_ativo().map_err(|e| e.to_string())?;
+        let (comparacao, candidatos) = crate::comparacao::rodar_comparacao(
+            store,
+            contexto.as_ref(),
+            cwd,
+            &providers,
+            tarefa,
+            gate,
+            Instante::agora(),
+        )?;
+        let mut linhas = vec![format!(
+            "comparacao {} — {} candidato(s):",
+            comparacao.id,
+            candidatos.len()
+        )];
+        for c in &candidatos {
+            let run = store
+                .run(c.run_id.as_deref().unwrap_or_default())
+                .map_err(|e| e.to_string())?;
+            let status = run
+                .map(|r| format!("{:?}", r.status))
+                .unwrap_or_else(|| "?".into());
+            linhas.push(format!(
+                "  {} — status: {status}, run: {}",
+                c.provider_id,
+                c.run_id.as_deref().unwrap_or("—")
+            ));
+        }
+        return Ok(linhas.join("\n"));
+    }
+
+    // `--scored` só substitui a decisão por regra quando o operador não deu
+    // override explícito -- override sempre vence, mesma disciplina de
+    // `routing/provider-rules` (spec: "Sem --scored usa só regra" implica
+    // que --scored nunca é consultado quando há override).
+    let (provider_id, origem_provider, todos_os_scores) = if provider.is_none() && scored {
+        let (p, o, scores) = resolver_provider_por_score(store)?;
+        (p, Some(o), scores)
+    } else {
+        let (p, o) = resolver_provider(store, cwd, provider)?;
+        (p, o, Vec::new())
+    };
+    let (modelo_resolvido, origem_modelo) =
+        resolver_modelo(cwd, &provider_id, model, model_pointer)?;
 
     if explain_only {
-        return Ok(match origem {
+        let mut linhas = vec![match origem_provider {
             Some(o) => format!("provider escolhido: {provider_id} (via {o})"),
             None => format!("provider escolhido: {provider_id} (override explícito)"),
-        });
+        }];
+        if let Some(m) = &modelo_resolvido {
+            linhas.push(match origem_modelo {
+                Some(o) => format!("modelo escolhido: {m} (via {o})"),
+                None => format!("modelo escolhido: {m} (override explícito)"),
+            });
+        }
+        // Spec historical-scoring: "Decisão por score nunca esconde o
+        // tamanho da base" -- mostra TODOS os candidatos, não só o
+        // vencedor.
+        if !todos_os_scores.is_empty() {
+            linhas.push("candidatos considerados:".to_string());
+            for s in &todos_os_scores {
+                linhas.push(format!(
+                    "  {} — taxa={:.0}%, n={}, duração_média={}",
+                    s.provider,
+                    s.taxa_sucesso * 100.0,
+                    s.n,
+                    s.duracao_media_segundos
+                        .map(|d| format!("{d:.0}s"))
+                        .unwrap_or_else(|| "sem dado".to_string())
+                ));
+            }
+        }
+        return Ok(linhas.join("\n"));
     }
 
     let contexto = store.contexto_ativo().map_err(|e| e.to_string())?;
+    if let Some(ctx) = &contexto {
+        checar_orcamento(store, cwd, &ctx.client_id)?;
+    }
+    let tarefa_final = montar_tarefa_com_recall(store, contexto.as_ref(), tarefa)?;
     let run = execucao::iniciar_run(
         store,
         contexto.as_ref(),
         cwd,
         execucao::PedidoRun {
             provider_id: &provider_id,
-            model,
-            tarefa,
+            model: modelo_resolvido.as_deref(),
+            tarefa: &tarefa_final,
             gate,
             base_commit: None,
         },
@@ -1221,6 +1661,187 @@ pub fn executar_eval_run(
         linhas.push(crate::eval::formatar_relatorio(caso, &runs));
     }
     Ok(linhas.join("\n"))
+}
+
+/// `brian router score` — mesma função de cálculo de `--scored`, sem
+/// decidir nada, só relatório para auditoria manual (design.md).
+pub fn executar_router_score(store: &dyn Store, provider: Option<&str>) -> Result<String, String> {
+    let contexto = store
+        .contexto_ativo()
+        .map_err(|e| e.to_string())?
+        .ok_or("nenhum contexto ativo")?;
+    let runs = store
+        .runs_finalizados_do_cliente(&contexto.client_id)
+        .map_err(|e| e.to_string())?;
+
+    let candidatos: Vec<&str> = match provider {
+        Some(p) => vec![p],
+        None => execucao::PROVIDERS_EXECUCAO_VERIFICADA.to_vec(),
+    };
+    let scores = router::calcular_scores(&runs, &candidatos);
+
+    let linhas: Vec<String> = scores
+        .iter()
+        .map(|s| {
+            format!(
+                "{} — taxa={:.0}%, n={}, duração_média={}",
+                s.provider,
+                s.taxa_sucesso * 100.0,
+                s.n,
+                s.duracao_media_segundos
+                    .map(|d| format!("{d:.0}s"))
+                    .unwrap_or_else(|| "sem dado".to_string())
+            )
+        })
+        .collect();
+    Ok(linhas.join("\n"))
+}
+
+pub fn executar_workflow_run(
+    store: &dyn Store,
+    cwd: &std::path::Path,
+    workflow_id: Option<&str>,
+    tarefa: &str,
+    scored: bool,
+) -> Result<String, String> {
+    let id = workflow_id.unwrap_or("fast");
+    let caminho = cwd.join("workflows").join(format!("{id}.json"));
+    let definicao_json = std::fs::read_to_string(&caminho)
+        .map_err(|e| format!("erro lendo {}: {e}", caminho.display()))?;
+    let def =
+        crate::workflow::carregar_workflow_de_texto(&definicao_json).map_err(|e| e.to_string())?;
+
+    let contexto = store.contexto_ativo().map_err(|e| e.to_string())?;
+    let wf = crate::workflow::rodar_workflow(
+        store,
+        contexto.as_ref(),
+        cwd,
+        cwd,
+        &def,
+        &definicao_json,
+        tarefa,
+        scored,
+        Instante::agora(),
+    )?;
+    Ok(format!(
+        "workflow_run {} — status: {:?}, fase: {}, total_fases: {}",
+        wf.id, wf.status, wf.current_phase, wf.total_phases
+    ))
+}
+
+pub fn executar_workflow_approve(
+    store: &dyn Store,
+    cwd: &std::path::Path,
+    workflow_run_id: &str,
+    scored: bool,
+) -> Result<String, String> {
+    // Sem carregar o arquivo do disco -- aprovar_workflow_run reconstrói a
+    // definição a partir do snapshot persistido em `workflow_run.definicao_json`
+    // (spec: "Versão do workflow é congelada no início do run").
+    let contexto = store.contexto_ativo().map_err(|e| e.to_string())?;
+    let wf = crate::workflow::aprovar_workflow_run(
+        store,
+        contexto.as_ref(),
+        cwd,
+        cwd,
+        workflow_run_id,
+        scored,
+        Instante::agora(),
+    )?;
+    Ok(format!(
+        "workflow_run {} — status: {:?}, fase: {}, total_fases: {}",
+        wf.id, wf.status, wf.current_phase, wf.total_phases
+    ))
+}
+
+pub fn executar_workflow_show(store: &dyn Store, workflow_run_id: &str) -> Result<String, String> {
+    let wf = store
+        .workflow_run(workflow_run_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("workflow_run '{workflow_run_id}' não encontrado"))?;
+    let entradas = crate::workflow::entradas_do_workflow_run(store, workflow_run_id)?;
+
+    let mut linhas = vec![format!(
+        "workflow_run {} — workflow: {} v{}, status: {:?}, fase atual: {}, total_fases: {}",
+        wf.id, wf.workflow_id, wf.workflow_version, wf.status, wf.current_phase, wf.total_phases
+    )];
+    if let Some(motivo) = &wf.pause_reason {
+        linhas.push(format!("motivo: {motivo}"));
+    }
+    linhas.push("histórico de fases:".to_string());
+    for e in &entradas {
+        linhas.push(format!(
+            "  #{} {} — outcome: {}, run: {}",
+            e.entrada_numero,
+            e.phase_id,
+            e.outcome.as_deref().unwrap_or("—"),
+            e.run_id.as_deref().unwrap_or("—")
+        ));
+    }
+    Ok(linhas.join("\n"))
+}
+
+pub fn executar_compare_choose(
+    store: &dyn Store,
+    comparacao_id: &str,
+    winner: &str,
+) -> Result<String, String> {
+    crate::comparacao::escolher_vencedor(store, comparacao_id, winner, Instante::agora())?;
+    Ok(format!(
+        "comparacao {comparacao_id} — vencedor registrado: {winner}"
+    ))
+}
+
+pub fn executar_experiment_run_h1(
+    store: &dyn Store,
+    file: &std::path::Path,
+    case_id: &str,
+    arm: &str,
+) -> Result<String, String> {
+    let braco = crate::context_governor::Braco::de_str(arm)
+        .ok_or_else(|| format!("braço inválido: '{arm}' (use a, b ou c)"))?;
+    let casos = crate::context_governor::carregar_casos(file)?;
+    let caso = casos
+        .into_iter()
+        .find(|c| c.id == case_id)
+        .ok_or_else(|| format!("case '{case_id}' não encontrado em {}", file.display()))?;
+
+    let run = crate::context_governor::rodar_execucao_experimento(
+        store,
+        &caso.fixture_repo,
+        &caso.id,
+        braco,
+        &caso.tarefa,
+        &caso.provider_id,
+        caso.gate.as_deref(),
+        caso.base_commit.as_deref(),
+        Instante::agora(),
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(format!(
+        "case {} braço {} — run {}, status: {:?}",
+        caso.id,
+        braco.as_str(),
+        run.id,
+        run.status
+    ))
+}
+
+pub fn executar_experiment_report_h1(store: &dyn Store) -> Result<String, String> {
+    let execucoes = store
+        .execucoes_do_experimento(None)
+        .map_err(|e| e.to_string())?;
+
+    let mut pares = Vec::with_capacity(execucoes.len());
+    for e in &execucoes {
+        if let Some(run) = store.run(&e.run_id).map_err(|e| e.to_string())? {
+            pares.push((e.braco.clone(), run));
+        }
+    }
+
+    let resultados = crate::context_governor::calcular_resultado_por_braco(&pares);
+    Ok(crate::context_governor::formatar_relatorio_h1(&resultados))
 }
 
 #[cfg(test)]
@@ -1723,6 +2344,19 @@ mod tests {
         assert!(saida.contains("codex\tnão autenticado\t—"));
     }
 
+    fn args_run_padrao(explain_only: bool) -> ArgsRun<'static> {
+        ArgsRun {
+            provider: None,
+            model: None,
+            model_pointer: None,
+            tarefa: "tarefa",
+            gate: None,
+            explain_only,
+            scored: false,
+            compare: None,
+        }
+    }
+
     fn store_com_contexto_ativo() -> crate::storage::sqlite::SqliteStore {
         let s = crate::storage::sqlite::SqliteStore::open(":memory:").unwrap();
         s.migrate().unwrap();
@@ -1768,8 +2402,21 @@ mod tests {
         // Sem routing/rules.json em `repo` -- se a implementação tentasse
         // carregar regras mesmo com override, o erro seria "erro lendo
         // regras", não o de provider inválido.
-        let erro =
-            executar_run(&s, &repo, Some("claude"), None, "tarefa", None, false).unwrap_err();
+        let erro = executar_run(
+            &s,
+            &repo,
+            ArgsRun {
+                provider: Some("claude"),
+                model: None,
+                model_pointer: None,
+                tarefa: "tarefa",
+                gate: None,
+                explain_only: false,
+                scored: false,
+                compare: None,
+            },
+        )
+        .unwrap_err();
         assert!(
             erro.contains("não tem execução não-interativa verificada"),
             "esperava erro de provider inválido do execucao::iniciar_run, veio: {erro}"
@@ -1788,7 +2435,7 @@ mod tests {
         )
         .unwrap();
 
-        let erro = executar_run(&s, &repo, None, None, "tarefa", None, false).unwrap_err();
+        let erro = executar_run(&s, &repo, args_run_padrao(false)).unwrap_err();
         assert!(
             erro.contains("não tem execução não-interativa verificada"),
             "provider decidido pela regra (claude) deveria chegar até a validação de \
@@ -1808,7 +2455,7 @@ mod tests {
         )
         .unwrap();
 
-        let saida = executar_run(&s, &repo, None, None, "tarefa", None, true).unwrap();
+        let saida = executar_run(&s, &repo, args_run_padrao(true)).unwrap();
         assert!(saida.contains("codex"));
         assert!(saida.contains("default"));
         assert!(
@@ -1838,12 +2485,415 @@ mod tests {
         )
         .unwrap();
 
-        let saida = executar_run(&s, &repo, None, None, "tarefa", None, true).unwrap();
+        let saida = executar_run(&s, &repo, args_run_padrao(true)).unwrap();
         assert!(saida.contains("codex"));
         assert!(
             saida.contains("regra"),
             "regra casou (project=checkout-api) e deveria ser reportada como origem, veio: {saida}"
         );
         std::fs::remove_dir_all(&repo).ok();
+    }
+
+    #[test]
+    fn model_explicito_nao_consulta_pointer() {
+        let s = store_com_contexto_ativo();
+        let repo = repo_git_temporario_para_run("model-explicito");
+        // Sem models/pointers.json em `repo` -- se a implementação tentasse
+        // resolver o pointer mesmo com --model explícito, o erro seria de
+        // leitura de arquivo, não sucesso.
+        let saida = executar_run(
+            &s,
+            &repo,
+            ArgsRun {
+                provider: Some("codex"),
+                model: Some("gpt-5.4"),
+                model_pointer: Some("pointer-que-nao-existe"),
+                tarefa: "tarefa",
+                gate: None,
+                explain_only: true,
+                scored: false,
+                compare: None,
+            },
+        )
+        .unwrap();
+        assert!(saida.contains("gpt-5.4"));
+        assert!(saida.contains("override explícito"));
+        std::fs::remove_dir_all(&repo).ok();
+    }
+
+    #[test]
+    fn sem_model_usa_model_pointer_restrito_ao_provider_ja_decidido() {
+        let s = store_com_contexto_ativo();
+        let repo = repo_git_temporario_para_run("model-pointer");
+        std::fs::create_dir_all(repo.join("providers/codex")).unwrap();
+        std::fs::create_dir_all(repo.join("models")).unwrap();
+        std::fs::write(
+            repo.join("models/pointers.json"),
+            r#"{"pointers": {"coding": {"primary": {"provider": "codex", "tier": "strong"}}}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            repo.join("providers/codex/models.json"),
+            r#"{"tiers": {"strong": "gpt-5.4"}}"#,
+        )
+        .unwrap();
+
+        let saida = executar_run(
+            &s,
+            &repo,
+            ArgsRun {
+                provider: Some("codex"),
+                model: None,
+                model_pointer: Some("coding"),
+                tarefa: "tarefa",
+                gate: None,
+                explain_only: true,
+                scored: false,
+                compare: None,
+            },
+        )
+        .unwrap();
+        assert!(saida.contains("gpt-5.4"));
+        assert!(saida.contains("pointer 'coding'"));
+        std::fs::remove_dir_all(&repo).ok();
+    }
+
+    #[test]
+    fn scored_sem_historico_ainda_decide_via_n_zero() {
+        let s = store_com_contexto_ativo();
+        let repo = repo_git_temporario_para_run("scored-sem-historico");
+
+        let saida = executar_run(
+            &s,
+            &repo,
+            ArgsRun {
+                provider: None,
+                model: None,
+                model_pointer: None,
+                tarefa: "tarefa",
+                gate: None,
+                explain_only: true,
+                scored: true,
+                compare: None,
+            },
+        )
+        .unwrap();
+        assert!(
+            saida.contains("codex"),
+            "único provider verificado deveria decidir mesmo sem histórico: {saida}"
+        );
+        assert!(saida.contains("n=0"));
+        std::fs::remove_dir_all(&repo).ok();
+    }
+
+    #[test]
+    fn scored_com_historico_real_reflete_taxa_e_n_corretos() {
+        let s = store_com_contexto_ativo();
+        let repo = repo_git_temporario_para_run("scored-com-historico");
+
+        // client_id vem de store_com_contexto_ativo(): "xpto".
+        s.criar_run(crate::storage::NovoRun {
+            id: "run-hist-1".into(),
+            client_id: "xpto".into(),
+            project: None,
+            base_commit: "abc".into(),
+            worktree_path: "/tmp/x".into(),
+            branch: "brian/run-hist-1".into(),
+            provider_id: "codex".into(),
+            started_at: Instante(0),
+        })
+        .unwrap();
+        s.atualizar_status_run("run-hist-1", StatusRun::Concluido, Some(Instante(10)), None)
+            .unwrap();
+
+        s.criar_run(crate::storage::NovoRun {
+            id: "run-hist-2".into(),
+            client_id: "xpto".into(),
+            project: None,
+            base_commit: "abc".into(),
+            worktree_path: "/tmp/y".into(),
+            branch: "brian/run-hist-2".into(),
+            provider_id: "codex".into(),
+            started_at: Instante(0),
+        })
+        .unwrap();
+        s.atualizar_status_run("run-hist-2", StatusRun::Falhou, Some(Instante(10)), None)
+            .unwrap();
+
+        let saida = executar_run(
+            &s,
+            &repo,
+            ArgsRun {
+                provider: None,
+                model: None,
+                model_pointer: None,
+                tarefa: "tarefa",
+                gate: None,
+                explain_only: true,
+                scored: true,
+                compare: None,
+            },
+        )
+        .unwrap();
+        assert!(saida.contains("codex"));
+        assert!(saida.contains("n=2"));
+        assert!(saida.contains("taxa=50%"));
+        std::fs::remove_dir_all(&repo).ok();
+    }
+
+    #[test]
+    fn compare_e_mutuamente_exclusivo_com_provider() {
+        let s = store_com_contexto_ativo();
+        let repo = repo_git_temporario_para_run("compare-exclusivo");
+
+        let erro = executar_run(
+            &s,
+            &repo,
+            ArgsRun {
+                provider: Some("codex"),
+                model: None,
+                model_pointer: None,
+                tarefa: "tarefa",
+                gate: None,
+                explain_only: false,
+                scored: false,
+                compare: Some("codex,claude"),
+            },
+        )
+        .unwrap_err();
+        assert!(erro.contains("mutuamente exclusivo"));
+        std::fs::remove_dir_all(&repo).ok();
+    }
+
+    #[test]
+    fn montar_tarefa_com_recall_sem_contexto_nao_altera_tarefa() {
+        let s = crate::storage::sqlite::SqliteStore::open(":memory:").unwrap();
+        s.migrate().unwrap();
+        let tarefa = montar_tarefa_com_recall(&s, None, "tarefa original").unwrap();
+        assert_eq!(tarefa, "tarefa original");
+    }
+
+    #[test]
+    fn montar_tarefa_com_recall_sem_notas_nao_altera_tarefa() {
+        let s = store_com_contexto_ativo();
+        let contexto = s.contexto_ativo().unwrap();
+        let tarefa = montar_tarefa_com_recall(&s, contexto.as_ref(), "tarefa original").unwrap();
+        assert_eq!(tarefa, "tarefa original");
+    }
+
+    #[test]
+    fn montar_tarefa_com_recall_com_notas_aneza_o_recall() {
+        let s = store_com_contexto_ativo();
+        crate::continuidade::registrar_nota(
+            &s,
+            s.contexto_ativo().unwrap().as_ref(),
+            "n1".into(),
+            CategoriaNota::Decisao,
+            "usar codex nesse projeto".into(),
+            Some("mais confiável".into()),
+            Instante(5),
+        )
+        .unwrap();
+
+        let contexto = s.contexto_ativo().unwrap();
+        let tarefa = montar_tarefa_com_recall(&s, contexto.as_ref(), "tarefa original").unwrap();
+        assert!(tarefa.starts_with("tarefa original"));
+        assert!(tarefa.contains("usar codex nesse projeto"));
+        assert!(tarefa.contains("motivo: mais confiável"));
+    }
+
+    #[test]
+    fn run_sem_orcamento_configurado_nao_e_bloqueado() {
+        let s = store_com_contexto_ativo();
+        let repo = repo_git_temporario_para_run("sem-orcamento");
+        // Sem budgets/clients.json em `repo` -- provider inválido é o único
+        // motivo de falha esperado, nunca orçamento.
+        let erro = executar_run(
+            &s,
+            &repo,
+            ArgsRun {
+                provider: Some("provider-inexistente"),
+                model: None,
+                model_pointer: None,
+                tarefa: "tarefa",
+                gate: None,
+                explain_only: false,
+                scored: false,
+                compare: None,
+            },
+        )
+        .unwrap_err();
+        assert!(!erro.contains("orçamento"));
+        std::fs::remove_dir_all(&repo).ok();
+    }
+
+    #[test]
+    fn run_com_orcamento_excedido_e_recusado_sem_persistir_run() {
+        let s = store_com_contexto_ativo();
+        let repo = repo_git_temporario_para_run("orcamento-excedido");
+        std::fs::create_dir_all(repo.join("budgets")).unwrap();
+        std::fs::write(
+            repo.join("budgets").join("clients.json"),
+            r#"{"clients": {"xpto": {"monthly_usd_equivalent": 10}}}"#,
+        )
+        .unwrap();
+
+        use crate::storage::NovoConsumo;
+        use crate::storage::test_util::novo_consumo;
+        s.gravar_consumo(NovoConsumo {
+            client_id: Some("xpto".into()),
+            custo_equivalente_api: Some(Money::de_unidades(10.0).unwrap()),
+            occurred_at: Instante::agora(),
+            ..novo_consumo("dedup-orcamento", "codex", "gpt")
+        })
+        .unwrap();
+
+        let erro = executar_run(
+            &s,
+            &repo,
+            ArgsRun {
+                provider: Some("claude"),
+                model: None,
+                model_pointer: None,
+                tarefa: "tarefa",
+                gate: None,
+                explain_only: false,
+                scored: false,
+                compare: None,
+            },
+        )
+        .unwrap_err();
+        assert!(erro.contains("orçamento"));
+        assert!(erro.contains("excedido"));
+
+        let runs = s.runs_finalizados_do_cliente("xpto").unwrap();
+        assert!(runs.is_empty(), "nenhum run deveria ter sido persistido");
+
+        std::fs::remove_dir_all(&repo).ok();
+    }
+
+    #[test]
+    fn run_com_orcamento_dentro_do_limite_roda_normalmente() {
+        let s = store_com_contexto_ativo();
+        let repo = repo_git_temporario_para_run("orcamento-ok");
+        std::fs::create_dir_all(repo.join("budgets")).unwrap();
+        std::fs::write(
+            repo.join("budgets").join("clients.json"),
+            r#"{"clients": {"xpto": {"monthly_usd_equivalent": 1000}}}"#,
+        )
+        .unwrap();
+
+        // "claude" não tem execução verificada -- se a checagem de
+        // orçamento passar (como deveria, dentro do limite), o erro que
+        // sobra é sempre o de provider inválido, nunca de orçamento.
+        let erro = executar_run(
+            &s,
+            &repo,
+            ArgsRun {
+                provider: Some("claude"),
+                model: None,
+                model_pointer: None,
+                tarefa: "tarefa",
+                gate: None,
+                explain_only: false,
+                scored: false,
+                compare: None,
+            },
+        )
+        .unwrap_err();
+        assert!(!erro.contains("orçamento"));
+        assert!(erro.contains("não tem execução não-interativa verificada"));
+        std::fs::remove_dir_all(&repo).ok();
+    }
+
+    #[test]
+    fn memory_recall_sem_contexto_ativo_e_erro_claro() {
+        let s = crate::storage::sqlite::SqliteStore::open(":memory:").unwrap();
+        s.migrate().unwrap();
+        let erro = executar_memory_recall(&s).unwrap_err();
+        assert!(erro.contains("contexto"));
+    }
+
+    #[test]
+    fn memory_recall_sem_notas_diz_isso_explicitamente() {
+        let s = store_com_contexto_ativo();
+        let saida = executar_memory_recall(&s).unwrap();
+        assert!(saida.contains("nenhuma nota"));
+    }
+
+    #[test]
+    fn memory_recall_e_identico_ao_que_seria_injetado_no_run() {
+        let s = store_com_contexto_ativo();
+        crate::continuidade::registrar_nota(
+            &s,
+            s.contexto_ativo().unwrap().as_ref(),
+            "n1".into(),
+            CategoriaNota::Decisao,
+            "usar codex nesse projeto".into(),
+            Some("mais confiável".into()),
+            Instante(5),
+        )
+        .unwrap();
+
+        let recall_exibido = executar_memory_recall(&s).unwrap();
+        let contexto = s.contexto_ativo().unwrap();
+        let tarefa_com_recall =
+            montar_tarefa_com_recall(&s, contexto.as_ref(), "tarefa original").unwrap();
+
+        assert!(tarefa_com_recall.ends_with(&recall_exibido));
+    }
+
+    #[test]
+    fn budget_check_de_cliente_inexistente_e_erro_claro() {
+        let s = crate::storage::sqlite::SqliteStore::open(":memory:").unwrap();
+        s.migrate().unwrap();
+        let erro = executar_budget_check(&s, std::path::Path::new("/nao/existe.json"), "xpto")
+            .unwrap_err();
+        assert!(erro.contains("xpto"));
+    }
+
+    #[test]
+    fn budget_check_sem_arquivo_de_orcamento_mostra_sem_orcamento_configurado() {
+        let s = crate::storage::sqlite::SqliteStore::open(":memory:").unwrap();
+        s.migrate().unwrap();
+        s.upsert_client("xpto").unwrap();
+
+        let saida =
+            executar_budget_check(&s, std::path::Path::new("/nao/existe.json"), "xpto").unwrap();
+        assert!(saida.contains("sem orçamento configurado"));
+    }
+
+    #[test]
+    fn budget_check_mostra_gasto_e_limite_lado_a_lado() {
+        use crate::storage::NovoConsumo;
+        use crate::storage::test_util::novo_consumo;
+
+        let s = crate::storage::sqlite::SqliteStore::open(":memory:").unwrap();
+        s.migrate().unwrap();
+        s.upsert_client("xpto").unwrap();
+        s.gravar_consumo(NovoConsumo {
+            client_id: Some("xpto".into()),
+            custo_equivalente_api: Some(Money::de_unidades(80.0).unwrap()),
+            occurred_at: Instante::agora(),
+            ..novo_consumo("dedup1", "codex", "gpt")
+        })
+        .unwrap();
+
+        let dir = crate::testutil::dir_temporario_unico("budget-check-cli");
+        std::fs::create_dir_all(&dir).unwrap();
+        let caminho = dir.join("clients.json");
+        std::fs::write(
+            &caminho,
+            r#"{"clients": {"xpto": {"monthly_usd_equivalent": 100, "alert_at_percent": [50, 80]}}}"#,
+        )
+        .unwrap();
+
+        let saida = executar_budget_check(&s, &caminho, "xpto").unwrap();
+        assert!(saida.contains("80.00"));
+        assert!(saida.contains("100.00"));
+        assert!(saida.contains("50%, 80%"));
+        assert!(saida.contains("dentro do limite"));
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

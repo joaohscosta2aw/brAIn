@@ -3,8 +3,11 @@
 //! Comportamento aprovado vive em `openspec/`.
 
 pub mod adapters;
+pub mod budget;
 pub mod capacidade;
 pub mod comandos;
+pub mod comparacao;
+pub mod context_governor;
 pub mod continuidade;
 pub mod custo;
 pub mod domain;
@@ -12,17 +15,20 @@ pub mod eval;
 pub mod execucao;
 pub mod identidade;
 pub mod importacao;
+pub mod memoria;
+pub mod model_router;
 pub mod router;
 pub mod storage;
 #[cfg(test)]
 mod testutil;
 pub mod vault;
+pub mod workflow;
 
 use capacidade::ColetorDeCapacidade;
 use clap::Parser;
 use comandos::{
-    Cli, Comando, ComandoContext, ComandoEval, ComandoMemory, ComandoPlans, ComandoVault,
-    ComandoWorktree,
+    Cli, Comando, ComandoBudget, ComandoCompare, ComandoContext, ComandoEval, ComandoExperiment,
+    ComandoMemory, ComandoPlans, ComandoRouter, ComandoVault, ComandoWorkflow, ComandoWorktree,
 };
 use importacao::ColetorDeUso;
 use std::path::PathBuf;
@@ -137,27 +143,66 @@ fn main() -> ExitCode {
         Comando::Memory(ComandoMemory::Decide { texto, why }) => {
             comandos::executar_memory_decide(&store, texto, why)
         }
+        Comando::Memory(ComandoMemory::Recall) => comandos::executar_memory_recall(&store),
         Comando::Continuity => comandos::executar_continuity_show(&store, &cwd),
         Comando::Handoff { provider } => comandos::executar_handoff(&store, &cwd, &provider),
         Comando::Run {
             tarefa,
             provider,
             model,
+            model_pointer,
             gate,
             explain_only,
+            scored,
+            compare,
         } => comandos::executar_run(
             &store,
             &cwd,
-            provider.as_deref(),
-            model.as_deref(),
-            &tarefa,
-            gate.as_deref(),
-            explain_only,
+            comandos::ArgsRun {
+                provider: provider.as_deref(),
+                model: model.as_deref(),
+                model_pointer: model_pointer.as_deref(),
+                tarefa: &tarefa,
+                gate: gate.as_deref(),
+                explain_only,
+                scored,
+                compare: compare.as_deref(),
+            },
         ),
         Comando::Recover { run, all } => comandos::executar_recover(&store, run.as_deref(), all),
         Comando::Worktree(ComandoWorktree::List) => comandos::executar_worktree_list(&store),
         Comando::Eval(ComandoEval::Run { case, dir }) => {
             comandos::executar_eval_run(&store, &dir, case.as_deref())
+        }
+        Comando::Router(ComandoRouter::Score { provider }) => {
+            comandos::executar_router_score(&store, provider.as_deref())
+        }
+        Comando::Workflow(ComandoWorkflow::Run {
+            workflow_id,
+            tarefa,
+            scored,
+        }) => {
+            comandos::executar_workflow_run(&store, &cwd, workflow_id.as_deref(), &tarefa, scored)
+        }
+        Comando::Workflow(ComandoWorkflow::Approve {
+            workflow_run_id,
+            scored,
+        }) => comandos::executar_workflow_approve(&store, &cwd, &workflow_run_id, scored),
+        Comando::Workflow(ComandoWorkflow::Show { workflow_run_id }) => {
+            comandos::executar_workflow_show(&store, &workflow_run_id)
+        }
+        Comando::Compare(ComandoCompare::Choose {
+            comparacao_id,
+            winner,
+        }) => comandos::executar_compare_choose(&store, &comparacao_id, &winner),
+        Comando::Experiment(ComandoExperiment::RunH1 { case_id, arm, file }) => {
+            comandos::executar_experiment_run_h1(&store, &file, &case_id, &arm)
+        }
+        Comando::Experiment(ComandoExperiment::ReportH1) => {
+            comandos::executar_experiment_report_h1(&store)
+        }
+        Comando::Budget(ComandoBudget::Check { client, file }) => {
+            comandos::executar_budget_check(&store, &file, &client)
         }
     };
 

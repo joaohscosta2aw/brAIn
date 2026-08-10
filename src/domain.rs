@@ -427,6 +427,95 @@ pub struct EventoDeRun {
     pub ocorrido_em: Instante,
 }
 
+/// Estado de um `workflow_run` — máquina de estados sobre fases
+/// (workflow-engine, blueprint §15).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusWorkflowRun {
+    Pending,
+    Running,
+    /// Aguardando aprovação explícita do operador (spec human-approval:
+    /// "Fase com aprovação obrigatória pausa o workflow").
+    Paused,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+/// Um workflow em execução: `workflow_version` é congelado no momento da
+/// criação (design.md, blueprint §15.6/§113) — nunca reavaliado depois.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkflowRunRegistrado {
+    pub id: String,
+    pub client_id: String,
+    pub project: Option<String>,
+    pub workflow_id: String,
+    pub workflow_version: i64,
+    /// Texto bruto do arquivo de definição no momento da criação — toda
+    /// decisão de transição posterior lê esta cópia, nunca o arquivo no
+    /// disco de novo (spec state-machine: "Versão do workflow é congelada
+    /// no início do run").
+    pub definicao_json: String,
+    /// Gravada uma vez, reaproveitada em toda fase e em `approve` — nunca
+    /// re-digitada pelo operador.
+    pub tarefa: String,
+    pub current_phase: String,
+    pub status: StatusWorkflowRun,
+    pub pause_reason: Option<String>,
+    pub total_phases: i64,
+    pub started_at: Instante,
+    pub finished_at: Option<Instante>,
+}
+
+/// Uma entrada no histórico de fases (blueprint §15.6: phase_history).
+/// `run_id` é `None` para fases terminais, que não executam
+/// `execucao::iniciar_run` (spec phase-execution).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntradaDeFase {
+    pub id: String,
+    pub workflow_run_id: String,
+    pub phase_id: String,
+    pub run_id: Option<String>,
+    pub outcome: Option<String>,
+    pub entrada_numero: i64,
+    pub started_at: Instante,
+    pub ended_at: Option<Instante>,
+}
+
+/// Uma comparação pareada (paired-comparison, blueprint §38.4):
+/// `vencedor_provider_id` é `None` até o operador escolher explicitamente —
+/// nunca preenchido pela execução dos candidatos.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComparacaoRegistrada {
+    pub id: String,
+    pub client_id: String,
+    pub project: Option<String>,
+    pub tarefa: String,
+    pub vencedor_provider_id: Option<String>,
+    pub started_at: Instante,
+    pub finished_at: Option<Instante>,
+}
+
+/// Um candidato de comparação — liga um provider ao `run` real que o
+/// executou.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CandidatoComparacao {
+    pub id: String,
+    pub comparacao_id: String,
+    pub provider_id: String,
+    pub run_id: Option<String>,
+}
+
+/// Uma execução do experimento H-1 (context-governor-experiment): liga um
+/// case sintético e um braço (A/B/C) ao `run` real que os executou.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecucaoExperimento {
+    pub id: String,
+    pub case_id: String,
+    pub braco: String,
+    pub run_id: String,
+    pub started_at: Instante,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

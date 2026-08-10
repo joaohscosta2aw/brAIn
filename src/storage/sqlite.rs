@@ -4,14 +4,17 @@
 //! garante isso a cada push.
 
 use super::{
-    EntradaCatalogo, NovaCredencialMetadados, NovaNota, NovoConsumo, NovoEvento, NovoPerfil,
-    NovoPlano, NovoQuotaSignal, NovoRun, Periodo, PlanoRegistrado, QuotaSignalRegistrado, Result,
-    Revisao, StorageError, Store, ViolacaoIntegridade,
+    EntradaCatalogo, NovaComparacao, NovaCredencialMetadados, NovaEntradaDeFase,
+    NovaExecucaoExperimento, NovaNota, NovoCandidatoComparacao, NovoConsumo, NovoEvento,
+    NovoPerfil, NovoPlano, NovoQuotaSignal, NovoRun, NovoWorkflowRun, Periodo, PlanoRegistrado,
+    QuotaSignalRegistrado, Result, Revisao, StorageError, Store, ViolacaoIntegridade,
 };
 use crate::domain::{
-    AttributionStatus, BillingMode, CategoriaNota, ClasseSecret, ContextoAtivo, CostSource,
-    CredencialRegistrada, Custo, EventoDeRun, Instante, Money, NotaDeMemoria, PerfilIdentidade,
-    ProviderBinding, RunRegistrado, StatusRun, Tokens, UsageRecord, UsageSource,
+    AttributionStatus, BillingMode, CandidatoComparacao, CategoriaNota, ClasseSecret,
+    ComparacaoRegistrada, ContextoAtivo, CostSource, CredencialRegistrada, Custo, EntradaDeFase,
+    EventoDeRun, ExecucaoExperimento, Instante, Money, NotaDeMemoria, PerfilIdentidade,
+    ProviderBinding, RunRegistrado, StatusRun, StatusWorkflowRun, Tokens, UsageRecord, UsageSource,
+    WorkflowRunRegistrado,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use std::sync::Mutex;
@@ -25,6 +28,9 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (3, include_str!("migrations/0003_identidade.sql")),
     (4, include_str!("migrations/0004_continuidade.sql")),
     (5, include_str!("migrations/0005_execucao.sql")),
+    (6, include_str!("migrations/0006_workflow.sql")),
+    (7, include_str!("migrations/0007_comparacao.sql")),
+    (8, include_str!("migrations/0008_experimento.sql")),
 ];
 
 pub struct SqliteStore {
@@ -899,6 +905,29 @@ impl Store for SqliteStore {
         self.runs_por_status(StatusRun::Abandonado)
     }
 
+    fn runs_finalizados_do_cliente(&self, client_id: &str) -> Result<Vec<RunRegistrado>> {
+        let conn = self.conn();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, client_id, project, base_commit, worktree_path, branch,
+                        provider_id, pid, status, custo_equivalente_micros, started_at, finished_at
+                 FROM run WHERE client_id = ?1 AND status IN (?2, ?3)",
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        let rows = stmt
+            .query_map(
+                params![
+                    client_id,
+                    status_run_to_str(StatusRun::Concluido),
+                    status_run_to_str(StatusRun::Falhou)
+                ],
+                row_to_run,
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| StorageError::Backend(e.to_string()))
+    }
+
     fn registrar_evento_run(&self, novo: NovoEvento) -> Result<()> {
         self.conn()
             .execute(
@@ -933,6 +962,293 @@ impl Store for SqliteStore {
                     ocorrido_em: Instante(row.get(3)?),
                 })
             })
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| StorageError::Backend(e.to_string()))
+    }
+
+    fn criar_workflow_run(&self, novo: NovoWorkflowRun) -> Result<WorkflowRunRegistrado> {
+        self.conn()
+            .execute(
+                "INSERT INTO workflow_run
+                    (id, client_id, project, workflow_id, workflow_version, definicao_json, tarefa,
+                     current_phase, status, pause_reason, total_phases, started_at, finished_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, 0, ?10, NULL)",
+                params![
+                    novo.id,
+                    novo.client_id,
+                    novo.project,
+                    novo.workflow_id,
+                    novo.workflow_version,
+                    novo.definicao_json,
+                    novo.tarefa,
+                    novo.current_phase,
+                    status_workflow_run_to_str(StatusWorkflowRun::Running),
+                    novo.started_at.0,
+                ],
+            )
+            .map_err(|e| StorageError::Invalid(e.to_string()))?;
+
+        Ok(WorkflowRunRegistrado {
+            id: novo.id,
+            client_id: novo.client_id,
+            project: novo.project,
+            workflow_id: novo.workflow_id,
+            workflow_version: novo.workflow_version,
+            definicao_json: novo.definicao_json,
+            tarefa: novo.tarefa,
+            current_phase: novo.current_phase,
+            status: StatusWorkflowRun::Running,
+            pause_reason: None,
+            total_phases: 0,
+            started_at: novo.started_at,
+            finished_at: None,
+        })
+    }
+
+    fn workflow_run(&self, id: &str) -> Result<Option<WorkflowRunRegistrado>> {
+        self.conn()
+            .query_row(
+                "SELECT id, client_id, project, workflow_id, workflow_version, definicao_json, tarefa,
+                        current_phase, status, pause_reason, total_phases, started_at, finished_at
+                 FROM workflow_run WHERE id = ?1",
+                params![id],
+                row_to_workflow_run,
+            )
+            .optional()
+            .map_err(|e| StorageError::Backend(e.to_string()))
+    }
+
+    fn atualizar_workflow_run(
+        &self,
+        id: &str,
+        current_phase: &str,
+        status: StatusWorkflowRun,
+        pause_reason: Option<&str>,
+        total_phases: i64,
+        finished_at: Option<Instante>,
+    ) -> Result<()> {
+        let alterado = self
+            .conn()
+            .execute(
+                "UPDATE workflow_run
+                 SET current_phase = ?1, status = ?2, pause_reason = ?3,
+                     total_phases = ?4, finished_at = ?5
+                 WHERE id = ?6",
+                params![
+                    current_phase,
+                    status_workflow_run_to_str(status),
+                    pause_reason,
+                    total_phases,
+                    finished_at.map(|i| i.0),
+                    id,
+                ],
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        if alterado == 0 {
+            return Err(StorageError::NotFound(format!("workflow_run {id}")));
+        }
+        Ok(())
+    }
+
+    fn registrar_entrada_fase(&self, nova: NovaEntradaDeFase) -> Result<EntradaDeFase> {
+        self.conn()
+            .execute(
+                "INSERT INTO workflow_phase_entry
+                    (id, workflow_run_id, phase_id, run_id, outcome, entrada_numero, started_at, ended_at)
+                 VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, NULL)",
+                params![
+                    nova.id,
+                    nova.workflow_run_id,
+                    nova.phase_id,
+                    nova.run_id,
+                    nova.entrada_numero,
+                    nova.started_at.0,
+                ],
+            )
+            .map_err(|e| StorageError::Invalid(e.to_string()))?;
+
+        Ok(EntradaDeFase {
+            id: nova.id,
+            workflow_run_id: nova.workflow_run_id,
+            phase_id: nova.phase_id,
+            run_id: nova.run_id,
+            outcome: None,
+            entrada_numero: nova.entrada_numero,
+            started_at: nova.started_at,
+            ended_at: None,
+        })
+    }
+
+    fn concluir_entrada_fase(
+        &self,
+        entrada_id: &str,
+        outcome: &str,
+        ended_at: Instante,
+    ) -> Result<()> {
+        let alterado = self
+            .conn()
+            .execute(
+                "UPDATE workflow_phase_entry SET outcome = ?1, ended_at = ?2 WHERE id = ?3",
+                params![outcome, ended_at.0, entrada_id],
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        if alterado == 0 {
+            return Err(StorageError::NotFound(format!(
+                "workflow_phase_entry {entrada_id}"
+            )));
+        }
+        Ok(())
+    }
+
+    fn entradas_do_workflow_run(&self, workflow_run_id: &str) -> Result<Vec<EntradaDeFase>> {
+        let conn = self.conn();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, workflow_run_id, phase_id, run_id, outcome, entrada_numero, started_at, ended_at
+                 FROM workflow_phase_entry WHERE workflow_run_id = ?1 ORDER BY started_at",
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![workflow_run_id], row_to_entrada_fase)
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| StorageError::Backend(e.to_string()))
+    }
+
+    fn criar_comparacao(&self, nova: NovaComparacao) -> Result<ComparacaoRegistrada> {
+        self.conn()
+            .execute(
+                "INSERT INTO comparacao
+                    (id, client_id, project, tarefa, vencedor_provider_id, started_at, finished_at)
+                 VALUES (?1, ?2, ?3, ?4, NULL, ?5, NULL)",
+                params![
+                    nova.id,
+                    nova.client_id,
+                    nova.project,
+                    nova.tarefa,
+                    nova.started_at.0,
+                ],
+            )
+            .map_err(|e| StorageError::Invalid(e.to_string()))?;
+
+        Ok(ComparacaoRegistrada {
+            id: nova.id,
+            client_id: nova.client_id,
+            project: nova.project,
+            tarefa: nova.tarefa,
+            vencedor_provider_id: None,
+            started_at: nova.started_at,
+            finished_at: None,
+        })
+    }
+
+    fn comparacao(&self, id: &str) -> Result<Option<ComparacaoRegistrada>> {
+        self.conn()
+            .query_row(
+                "SELECT id, client_id, project, tarefa, vencedor_provider_id, started_at, finished_at
+                 FROM comparacao WHERE id = ?1",
+                params![id],
+                row_to_comparacao,
+            )
+            .optional()
+            .map_err(|e| StorageError::Backend(e.to_string()))
+    }
+
+    fn registrar_candidato_comparacao(
+        &self,
+        novo: NovoCandidatoComparacao,
+    ) -> Result<CandidatoComparacao> {
+        self.conn()
+            .execute(
+                "INSERT INTO comparacao_candidato (id, comparacao_id, provider_id, run_id)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![novo.id, novo.comparacao_id, novo.provider_id, novo.run_id],
+            )
+            .map_err(|e| StorageError::Invalid(e.to_string()))?;
+
+        Ok(CandidatoComparacao {
+            id: novo.id,
+            comparacao_id: novo.comparacao_id,
+            provider_id: novo.provider_id,
+            run_id: novo.run_id,
+        })
+    }
+
+    fn candidatos_da_comparacao(&self, comparacao_id: &str) -> Result<Vec<CandidatoComparacao>> {
+        let conn = self.conn();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, comparacao_id, provider_id, run_id
+                 FROM comparacao_candidato WHERE comparacao_id = ?1",
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![comparacao_id], row_to_candidato_comparacao)
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| StorageError::Backend(e.to_string()))
+    }
+
+    fn definir_vencedor_comparacao(
+        &self,
+        comparacao_id: &str,
+        provider_id: &str,
+        finished_at: Instante,
+    ) -> Result<()> {
+        let alterado = self
+            .conn()
+            .execute(
+                "UPDATE comparacao SET vencedor_provider_id = ?1, finished_at = ?2 WHERE id = ?3",
+                params![provider_id, finished_at.0, comparacao_id],
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        if alterado == 0 {
+            return Err(StorageError::NotFound(format!(
+                "comparacao {comparacao_id}"
+            )));
+        }
+        Ok(())
+    }
+
+    fn registrar_execucao_experimento(
+        &self,
+        nova: NovaExecucaoExperimento,
+    ) -> Result<ExecucaoExperimento> {
+        self.conn()
+            .execute(
+                "INSERT INTO experimento_execucao (id, case_id, braco, run_id, started_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    nova.id,
+                    nova.case_id,
+                    nova.braco,
+                    nova.run_id,
+                    nova.started_at.0
+                ],
+            )
+            .map_err(|e| StorageError::Invalid(e.to_string()))?;
+
+        Ok(ExecucaoExperimento {
+            id: nova.id,
+            case_id: nova.case_id,
+            braco: nova.braco,
+            run_id: nova.run_id,
+            started_at: nova.started_at,
+        })
+    }
+
+    fn execucoes_do_experimento(&self, braco: Option<&str>) -> Result<Vec<ExecucaoExperimento>> {
+        let conn = self.conn();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, case_id, braco, run_id, started_at
+                 FROM experimento_execucao
+                 WHERE ?1 IS NULL OR braco = ?1",
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![braco], row_to_execucao_experimento)
             .map_err(|e| StorageError::Backend(e.to_string()))?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(|e| StorageError::Backend(e.to_string()))
@@ -1094,6 +1410,90 @@ fn str_to_status_run(s: &str) -> StatusRun {
         "concluido" => StatusRun::Concluido,
         "falhou" => StatusRun::Falhou,
         _ => StatusRun::Abandonado,
+    }
+}
+
+fn row_to_workflow_run(row: &Row) -> rusqlite::Result<WorkflowRunRegistrado> {
+    Ok(WorkflowRunRegistrado {
+        id: row.get(0)?,
+        client_id: row.get(1)?,
+        project: row.get(2)?,
+        workflow_id: row.get(3)?,
+        workflow_version: row.get(4)?,
+        definicao_json: row.get(5)?,
+        tarefa: row.get(6)?,
+        current_phase: row.get(7)?,
+        status: str_to_status_workflow_run(&row.get::<_, String>(8)?),
+        pause_reason: row.get(9)?,
+        total_phases: row.get(10)?,
+        started_at: Instante(row.get(11)?),
+        finished_at: row.get::<_, Option<i64>>(12)?.map(Instante),
+    })
+}
+
+fn row_to_entrada_fase(row: &Row) -> rusqlite::Result<EntradaDeFase> {
+    Ok(EntradaDeFase {
+        id: row.get(0)?,
+        workflow_run_id: row.get(1)?,
+        phase_id: row.get(2)?,
+        run_id: row.get(3)?,
+        outcome: row.get(4)?,
+        entrada_numero: row.get(5)?,
+        started_at: Instante(row.get(6)?),
+        ended_at: row.get::<_, Option<i64>>(7)?.map(Instante),
+    })
+}
+
+fn row_to_comparacao(row: &Row) -> rusqlite::Result<ComparacaoRegistrada> {
+    Ok(ComparacaoRegistrada {
+        id: row.get(0)?,
+        client_id: row.get(1)?,
+        project: row.get(2)?,
+        tarefa: row.get(3)?,
+        vencedor_provider_id: row.get(4)?,
+        started_at: Instante(row.get(5)?),
+        finished_at: row.get::<_, Option<i64>>(6)?.map(Instante),
+    })
+}
+
+fn row_to_candidato_comparacao(row: &Row) -> rusqlite::Result<CandidatoComparacao> {
+    Ok(CandidatoComparacao {
+        id: row.get(0)?,
+        comparacao_id: row.get(1)?,
+        provider_id: row.get(2)?,
+        run_id: row.get(3)?,
+    })
+}
+
+fn row_to_execucao_experimento(row: &Row) -> rusqlite::Result<ExecucaoExperimento> {
+    Ok(ExecucaoExperimento {
+        id: row.get(0)?,
+        case_id: row.get(1)?,
+        braco: row.get(2)?,
+        run_id: row.get(3)?,
+        started_at: Instante(row.get(4)?),
+    })
+}
+
+fn status_workflow_run_to_str(s: StatusWorkflowRun) -> &'static str {
+    match s {
+        StatusWorkflowRun::Pending => "pending",
+        StatusWorkflowRun::Running => "running",
+        StatusWorkflowRun::Paused => "paused",
+        StatusWorkflowRun::Completed => "completed",
+        StatusWorkflowRun::Failed => "failed",
+        StatusWorkflowRun::Cancelled => "cancelled",
+    }
+}
+
+fn str_to_status_workflow_run(s: &str) -> StatusWorkflowRun {
+    match s {
+        "pending" => StatusWorkflowRun::Pending,
+        "running" => StatusWorkflowRun::Running,
+        "paused" => StatusWorkflowRun::Paused,
+        "completed" => StatusWorkflowRun::Completed,
+        "failed" => StatusWorkflowRun::Failed,
+        _ => StatusWorkflowRun::Cancelled,
     }
 }
 
@@ -2325,6 +2725,55 @@ mod tests {
     }
 
     #[test]
+    fn runs_finalizados_do_cliente_filtra_por_cliente_e_status() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.upsert_client("outro-cliente").unwrap();
+
+        s.criar_run(novo_run("run-concluido")).unwrap();
+        s.atualizar_status_run(
+            "run-concluido",
+            StatusRun::Concluido,
+            Some(Instante(2000)),
+            None,
+        )
+        .unwrap();
+
+        s.criar_run(novo_run("run-falho")).unwrap();
+        s.atualizar_status_run("run-falho", StatusRun::Falhou, Some(Instante(2000)), None)
+            .unwrap();
+
+        // Em execução (não finalizado) -- não deve aparecer.
+        s.criar_run(novo_run("run-em-execucao")).unwrap();
+
+        // De outro cliente -- não deve aparecer mesmo finalizado.
+        s.criar_run(NovoRun {
+            id: "run-outro-cliente".into(),
+            client_id: "outro-cliente".into(),
+            project: None,
+            base_commit: "abc".into(),
+            worktree_path: "/tmp/x".into(),
+            branch: "brian/run-outro-cliente".into(),
+            provider_id: "codex".into(),
+            started_at: Instante(1000),
+        })
+        .unwrap();
+        s.atualizar_status_run(
+            "run-outro-cliente",
+            StatusRun::Concluido,
+            Some(Instante(2000)),
+            None,
+        )
+        .unwrap();
+
+        let finalizados = s.runs_finalizados_do_cliente("xpto").unwrap();
+        let ids: Vec<_> = finalizados.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&"run-concluido"));
+        assert!(ids.contains(&"run-falho"));
+    }
+
+    #[test]
     fn registrar_e_listar_eventos_do_run() {
         let s = store();
         s.upsert_client("xpto").unwrap();
@@ -2349,5 +2798,243 @@ mod tests {
         let eventos = s.eventos_do_run("run1").unwrap();
         assert_eq!(eventos.len(), 2);
         assert_eq!(eventos[0].tipo, "worktree.create");
+    }
+
+    fn novo_workflow_run(id: &str) -> NovoWorkflowRun {
+        NovoWorkflowRun {
+            id: id.into(),
+            client_id: "xpto".into(),
+            project: Some("checkout-api".into()),
+            workflow_id: "fast".into(),
+            workflow_version: 1,
+            definicao_json: "{}".into(),
+            tarefa: "tarefa de teste".into(),
+            current_phase: "implement".into(),
+            started_at: Instante(1000),
+        }
+    }
+
+    #[test]
+    fn criar_workflow_run_e_le_de_volta() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.criar_workflow_run(novo_workflow_run("wf1")).unwrap();
+
+        let wf = s.workflow_run("wf1").unwrap().unwrap();
+        assert_eq!(wf.status, StatusWorkflowRun::Running);
+        assert_eq!(wf.current_phase, "implement");
+        assert_eq!(wf.total_phases, 0);
+        assert_eq!(wf.workflow_version, 1);
+    }
+
+    #[test]
+    fn workflow_run_inexistente_e_none() {
+        let s = store();
+        assert_eq!(s.workflow_run("fantasma").unwrap(), None);
+    }
+
+    #[test]
+    fn atualizar_workflow_run_registra_transicao() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.criar_workflow_run(novo_workflow_run("wf1")).unwrap();
+
+        s.atualizar_workflow_run("wf1", "verify", StatusWorkflowRun::Running, None, 1, None)
+            .unwrap();
+
+        let wf = s.workflow_run("wf1").unwrap().unwrap();
+        assert_eq!(wf.current_phase, "verify");
+        assert_eq!(wf.total_phases, 1);
+    }
+
+    #[test]
+    fn atualizar_workflow_run_registra_pausa_com_motivo() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.criar_workflow_run(novo_workflow_run("wf1")).unwrap();
+
+        s.atualizar_workflow_run(
+            "wf1",
+            "plan_review",
+            StatusWorkflowRun::Paused,
+            Some("aguardando aprovação"),
+            1,
+            None,
+        )
+        .unwrap();
+
+        let wf = s.workflow_run("wf1").unwrap().unwrap();
+        assert_eq!(wf.status, StatusWorkflowRun::Paused);
+        assert_eq!(wf.pause_reason.as_deref(), Some("aguardando aprovação"));
+    }
+
+    #[test]
+    fn registrar_e_concluir_entrada_de_fase() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.criar_workflow_run(novo_workflow_run("wf1")).unwrap();
+        s.criar_run(novo_run("run1")).unwrap();
+
+        let entrada = s
+            .registrar_entrada_fase(NovaEntradaDeFase {
+                id: "entrada1".into(),
+                workflow_run_id: "wf1".into(),
+                phase_id: "implement".into(),
+                run_id: Some("run1".into()),
+                entrada_numero: 1,
+                started_at: Instante(1000),
+            })
+            .unwrap();
+        assert_eq!(entrada.outcome, None);
+
+        s.concluir_entrada_fase("entrada1", "success", Instante(1010))
+            .unwrap();
+
+        let entradas = s.entradas_do_workflow_run("wf1").unwrap();
+        assert_eq!(entradas.len(), 1);
+        assert_eq!(entradas[0].outcome.as_deref(), Some("success"));
+        assert_eq!(entradas[0].ended_at, Some(Instante(1010)));
+    }
+
+    #[test]
+    fn entrada_de_fase_terminal_sem_run_associado() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.criar_workflow_run(novo_workflow_run("wf1")).unwrap();
+
+        s.registrar_entrada_fase(NovaEntradaDeFase {
+            id: "entrada-terminal".into(),
+            workflow_run_id: "wf1".into(),
+            phase_id: "done".into(),
+            run_id: None,
+            entrada_numero: 1,
+            started_at: Instante(2000),
+        })
+        .unwrap();
+
+        let entradas = s.entradas_do_workflow_run("wf1").unwrap();
+        assert_eq!(entradas[0].run_id, None);
+    }
+
+    fn nova_comparacao(id: &str) -> NovaComparacao {
+        NovaComparacao {
+            id: id.into(),
+            client_id: "xpto".into(),
+            project: Some("checkout-api".into()),
+            tarefa: "tarefa de teste".into(),
+            started_at: Instante(1000),
+        }
+    }
+
+    #[test]
+    fn criar_comparacao_e_le_de_volta() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.criar_comparacao(nova_comparacao("cmp1")).unwrap();
+
+        let cmp = s.comparacao("cmp1").unwrap().unwrap();
+        assert_eq!(cmp.vencedor_provider_id, None);
+        assert_eq!(cmp.tarefa, "tarefa de teste");
+    }
+
+    #[test]
+    fn comparacao_inexistente_e_none() {
+        let s = store();
+        assert_eq!(s.comparacao("fantasma").unwrap(), None);
+    }
+
+    #[test]
+    fn registrar_e_listar_candidatos_de_comparacao() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.criar_comparacao(nova_comparacao("cmp1")).unwrap();
+        s.criar_run(novo_run("run1")).unwrap();
+
+        s.registrar_candidato_comparacao(NovoCandidatoComparacao {
+            id: "cand1".into(),
+            comparacao_id: "cmp1".into(),
+            provider_id: "codex".into(),
+            run_id: Some("run1".into()),
+        })
+        .unwrap();
+
+        let candidatos = s.candidatos_da_comparacao("cmp1").unwrap();
+        assert_eq!(candidatos.len(), 1);
+        assert_eq!(candidatos[0].provider_id, "codex");
+        assert_eq!(candidatos[0].run_id.as_deref(), Some("run1"));
+    }
+
+    #[test]
+    fn definir_vencedor_comparacao_atualiza_o_registro() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.criar_comparacao(nova_comparacao("cmp1")).unwrap();
+
+        s.definir_vencedor_comparacao("cmp1", "codex", Instante(2000))
+            .unwrap();
+
+        let cmp = s.comparacao("cmp1").unwrap().unwrap();
+        assert_eq!(cmp.vencedor_provider_id.as_deref(), Some("codex"));
+        assert_eq!(cmp.finished_at, Some(Instante(2000)));
+    }
+
+    #[test]
+    fn definir_vencedor_de_comparacao_inexistente_e_notfound() {
+        let s = store();
+        let err = s
+            .definir_vencedor_comparacao("fantasma", "codex", Instante(0))
+            .unwrap_err();
+        assert!(matches!(err, StorageError::NotFound(_)));
+    }
+
+    #[test]
+    fn registrar_execucao_experimento_e_le_de_volta() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.criar_run(novo_run("run1")).unwrap();
+
+        let execucao = s
+            .registrar_execucao_experimento(NovaExecucaoExperimento {
+                id: "exp1".into(),
+                case_id: "caso-1".into(),
+                braco: "a".into(),
+                run_id: "run1".into(),
+                started_at: Instante(1000),
+            })
+            .unwrap();
+        assert_eq!(execucao.braco, "a");
+
+        let todas = s.execucoes_do_experimento(None).unwrap();
+        assert_eq!(todas.len(), 1);
+        assert_eq!(todas[0].case_id, "caso-1");
+    }
+
+    #[test]
+    fn execucoes_do_experimento_filtra_por_braco() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        s.criar_run(novo_run("run1")).unwrap();
+        s.criar_run(novo_run("run2")).unwrap();
+
+        s.registrar_execucao_experimento(NovaExecucaoExperimento {
+            id: "exp1".into(),
+            case_id: "caso-1".into(),
+            braco: "a".into(),
+            run_id: "run1".into(),
+            started_at: Instante(1000),
+        })
+        .unwrap();
+        s.registrar_execucao_experimento(NovaExecucaoExperimento {
+            id: "exp2".into(),
+            case_id: "caso-1".into(),
+            braco: "b".into(),
+            run_id: "run2".into(),
+            started_at: Instante(1001),
+        })
+        .unwrap();
+
+        let do_braco_a = s.execucoes_do_experimento(Some("a")).unwrap();
+        assert_eq!(do_braco_a.len(), 1);
+        assert_eq!(do_braco_a[0].id, "exp1");
     }
 }
