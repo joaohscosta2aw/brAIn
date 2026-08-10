@@ -40,7 +40,7 @@ impl std::error::Error for ErroExecucao {}
 /// disciplina de honestidade de `PROVIDERS_ISOLAMENTO_VERIFICADO`
 /// (`identidade.rs`) e `providers_sem_fonte` (`capacidade.rs`): só cresce
 /// quando alguém verifica de verdade (design.md).
-pub const PROVIDERS_EXECUCAO_VERIFICADA: &[&str] = &["codex"];
+pub const PROVIDERS_EXECUCAO_VERIFICADA: &[&str] = &["codex", "grok"];
 
 fn git(repo: &Path, args: &[&str]) -> Result<String, ErroExecucao> {
     let saida = Command::new("git")
@@ -143,12 +143,35 @@ fn executar_provider(
         return Err(ErroExecucao::ProviderNaoSuportado(provider_id.to_string()));
     }
 
-    // codex exec -s workspace-write -C <worktree> <tarefa>: sandbox do
-    // próprio Codex restringe escrita ao workspace, sem flag "dangerously"
-    // (design.md, task 4.4). `-m` só é passado quando o operador escolheu um
-    // modelo explicitamente -- sem isso, Codex usa o próprio default, que o
-    // trailer de proveniência registra como "default" (honesto: Brian não
-    // sabe qual modelo o default do Codex resolve para).
+    match provider_id {
+        "codex" => executar_codex(worktree, tarefa, model),
+        "grok" => executar_grok(worktree, tarefa, model),
+        _ => unreachable!("já filtrado por PROVIDERS_EXECUCAO_VERIFICADA acima"),
+    }
+}
+
+fn saida_para_resultado(saida: std::process::Output) -> ResultadoProvider {
+    ResultadoProvider {
+        sucesso: saida.status.success(),
+        resumo_stderr: String::from_utf8_lossy(&saida.stderr)
+            .lines()
+            .take(3)
+            .collect::<Vec<_>>()
+            .join(" | "),
+    }
+}
+
+/// `codex exec -s workspace-write -C <worktree> <tarefa>`: sandbox do
+/// próprio Codex restringe escrita ao workspace, sem flag "dangerously"
+/// (design.md, task 4.4). `-m` só é passado quando o operador escolheu um
+/// modelo explicitamente -- sem isso, Codex usa o próprio default, que o
+/// trailer de proveniência registra como "default" (honesto: Brian não
+/// sabe qual modelo o default do Codex resolve para).
+fn executar_codex(
+    worktree: &Path,
+    tarefa: &str,
+    model: Option<&str>,
+) -> Result<ResultadoProvider, ErroExecucao> {
     let mut args = vec!["exec", "-s", "workspace-write", "-C"];
     let worktree_str = worktree.to_str().unwrap_or_default();
     args.push(worktree_str);
@@ -164,14 +187,48 @@ fn executar_provider(
         .output()
         .map_err(|e| ErroExecucao::Git(format!("erro executando codex exec: {e}")))?;
 
-    Ok(ResultadoProvider {
-        sucesso: saida.status.success(),
-        resumo_stderr: String::from_utf8_lossy(&saida.stderr)
-            .lines()
-            .take(3)
-            .collect::<Vec<_>>()
-            .join(" | "),
-    })
+    Ok(saida_para_resultado(saida))
+}
+
+/// Monta os argumentos de `grok` -- separado de `executar_grok` para ser
+/// testável sem depender do binário real instalado.
+fn montar_args_grok<'a>(
+    worktree: &'a Path,
+    tarefa: &'a str,
+    model: Option<&'a str>,
+) -> Vec<&'a str> {
+    let mut args = vec!["--cwd", worktree.to_str().unwrap_or_default()];
+    if let Some(m) = model {
+        args.push("-m");
+        args.push(m);
+    }
+    args.push("-p");
+    args.push(tarefa);
+    args.push("--permission-mode");
+    args.push("bypassPermissions");
+    args
+}
+
+/// `grok --cwd <worktree> -p <tarefa> --permission-mode bypassPermissions
+/// [-m <model>]` -- `bypassPermissions` é o modo confirmado manualmente
+/// (design.md, grok-execucao-verificada) que roda de ponta a ponta sem
+/// travar esperando aprovação interativa. Diferente do Codex, o Grok não
+/// cria commit próprio -- `aplicar_trailers_se_houver_commit_novo` já
+/// trata isso como no-op (nenhuma mudança necessária aqui).
+fn executar_grok(
+    worktree: &Path,
+    tarefa: &str,
+    model: Option<&str>,
+) -> Result<ResultadoProvider, ErroExecucao> {
+    let args = montar_args_grok(worktree, tarefa, model);
+
+    let saida = Command::new("grok")
+        .args(&args)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| ErroExecucao::Git(format!("erro executando grok: {e}")))?;
+
+    Ok(saida_para_resultado(saida))
 }
 
 /// Resultado bruto do gate determinístico — mesmo formato de
@@ -486,6 +543,47 @@ mod tests {
         let s = SqliteStore::open(":memory:").unwrap();
         s.migrate().unwrap();
         s
+    }
+
+    #[test]
+    fn montar_args_grok_sem_model_usa_bypass_permissions() {
+        let worktree = Path::new("/tmp/wt");
+        let args = montar_args_grok(worktree, "corrige o bug", None);
+        assert_eq!(
+            args,
+            vec![
+                "--cwd",
+                "/tmp/wt",
+                "-p",
+                "corrige o bug",
+                "--permission-mode",
+                "bypassPermissions",
+            ]
+        );
+    }
+
+    #[test]
+    fn montar_args_grok_com_model_inclui_flag_m() {
+        let worktree = Path::new("/tmp/wt");
+        let args = montar_args_grok(worktree, "corrige o bug", Some("grok-4"));
+        assert_eq!(
+            args,
+            vec![
+                "--cwd",
+                "/tmp/wt",
+                "-m",
+                "grok-4",
+                "-p",
+                "corrige o bug",
+                "--permission-mode",
+                "bypassPermissions",
+            ]
+        );
+    }
+
+    #[test]
+    fn grok_esta_na_lista_de_providers_verificados() {
+        assert!(PROVIDERS_EXECUCAO_VERIFICADA.contains(&"grok"));
     }
 
     fn contexto() -> ContextoAtivo {
