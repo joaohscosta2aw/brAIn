@@ -1,0 +1,19 @@
+# Extensão das regras padrão do gitleaks (execution/security-gates,
+# blueprint §30): a regra built-in "generic-api-key" detecta atribuições
+# estilo Python/shell/dotenv (`API_KEY = "..."`) mas NÃO detecta a sintaxe
+# de declaração de constante do Rust (`pub const API_KEY: &str = "..."`)
+# -- lacuna real, confirmada ao vivo (teste manual de
+# security-gates/tasks.md 4.3): uma credencial nessa forma sobreviveu ao
+# scan padrão num `brian run` real.
+#
+# `useDefault = true` mantém todas as regras padrão do gitleaks --
+# esta regra só soma, nunca substitui.
+[extend]
+useDefault = true
+
+[[rules]]
+id = "rust-const-secret"
+description = "Credencial em declaração Rust (const/static/let), não coberta pela regra generic-api-key padrão"
+regex = '''(?i)(?:pub\s+)?(?:const|static(?:\s+mut)?|let(?:\s+mut)?)\s+\w*(?:key|secret|token|password|credential)\w*\s*(?::\s*[^=]+)?=\s*"([a-zA-Z0-9_\-\.\/+=]{16,})"'''
+secretGroup = 1
+keywords = ["const", "static", "let"]
