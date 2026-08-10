@@ -41,6 +41,39 @@ de "confiança injustificada" enquanto o volume de uso real não chega lá.
 |----|----------|----------|
 | **H-1** | Context Governor reduz custo total por change bem-sucedido ≥30%. | Experimento A/B/C; senão remove o módulo. |
 
+### Nota — resultado do experimento H-1 (2026-08-09)
+
+Rodado via `context-governor-experiment`: 9 tarefas sintéticas × 3 braços =
+27 execuções reais de `codex` (`experiments/h1-tasks.json`, população
+reduzida de 30 para 9 por decisão consciente já registrada na proposta da
+change; N pequeno, resultado direcional, não conclusivo).
+
+```text
+braço A (baseline, sem pacote):                 taxa 100% (n=9)
+braço B (pacote curado, uso exclusivo):         taxa  67% (n=9, 3 falhas de gate reais)
+braço C (pacote curado, ponto de partida):      taxa 100% (n=9)
+```
+
+Custo em USD não foi medido (não-objetivo declarado); duração também não
+ficou disponível como proxy nesta rodada (limitação pré-existente de
+`execucao::iniciar_run`: `finished_at` usa o mesmo `Instante` passado para
+`started_at`, não um timestamp reamostrado após a execução real — afeta
+todo o sistema, não só o experimento, e fica fora do escopo desta nota).
+
+**Leitura honesta, não uma conclusão de H-1:** as 3 falhas do braço B foram
+todas falhas reais do gate (`cargo test` reprovado no worktree, não erro de
+infraestrutura) — o braço que *obriga* o agente a usar só o pacote curado
+(busca por grep + diff + memória) saiu pior que o baseline e que o híbrido
+nesta amostra pequena. Isso é consistente com um dos riscos que o próprio
+blueprint (§18.2) já listava como razão de H-1 poder estar errada: busca
+agêntica livre pode superar retrieval pré-computado quando o retrieval é
+uma aproximação grosseira (aqui, `grep` por palavra-chave, não um grafo de
+código real). Com N=9 por braço, isso não é evidência estatística
+suficiente para confirmar nem descartar H-1 — é sinal, não veredito. As 10
+tarefas de `experiments/h1-tasks.json` já foram todas usadas (a 10ª,
+h1-01, rodou como piloto manual antes desta rodada); aumentar a amostra
+exige tarefas novas, não reexecutar as mesmas.
+
 ## Ordem sagrada de implementação
 
 ```text
