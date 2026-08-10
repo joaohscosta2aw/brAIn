@@ -3,6 +3,7 @@
 //! Comportamento aprovado vive em `openspec/`.
 
 pub mod adapters;
+pub mod billing;
 pub mod budget;
 pub mod capacidade;
 pub mod comandos;
@@ -27,8 +28,9 @@ pub mod workflow;
 use capacidade::ColetorDeCapacidade;
 use clap::Parser;
 use comandos::{
-    Cli, Comando, ComandoBudget, ComandoCompare, ComandoContext, ComandoEval, ComandoExperiment,
-    ComandoMemory, ComandoPlans, ComandoRouter, ComandoVault, ComandoWorkflow, ComandoWorktree,
+    Cli, Comando, ComandoBilling, ComandoBudget, ComandoCompare, ComandoContext, ComandoEval,
+    ComandoExperiment, ComandoMemory, ComandoPlans, ComandoRouter, ComandoVault, ComandoWorkflow,
+    ComandoWorktree,
 };
 use importacao::ColetorDeUso;
 use std::path::PathBuf;
@@ -137,12 +139,14 @@ fn main() -> ExitCode {
             &store, client, project, git_name, git_email, github_org,
         ),
         Comando::Vault(ComandoVault::List) => comandos::executar_vault_list(&store),
-        Comando::Memory(ComandoMemory::Note { texto }) => {
-            comandos::executar_memory_note(&store, texto)
+        Comando::Memory(ComandoMemory::Note { texto, supersedes }) => {
+            comandos::executar_memory_note(&store, texto, supersedes)
         }
-        Comando::Memory(ComandoMemory::Decide { texto, why }) => {
-            comandos::executar_memory_decide(&store, texto, why)
-        }
+        Comando::Memory(ComandoMemory::Decide {
+            texto,
+            why,
+            supersedes,
+        }) => comandos::executar_memory_decide(&store, texto, why, supersedes),
         Comando::Memory(ComandoMemory::Recall) => comandos::executar_memory_recall(&store),
         Comando::Continuity => comandos::executar_continuity_show(&store, &cwd),
         Comando::Handoff { provider } => comandos::executar_handoff(&store, &cwd, &provider),
@@ -204,6 +208,11 @@ fn main() -> ExitCode {
         Comando::Budget(ComandoBudget::Check { client, file }) => {
             comandos::executar_budget_check(&store, &file, &client)
         }
+        Comando::Billing(ComandoBilling::Chargeback {
+            client,
+            period,
+            file,
+        }) => comandos::executar_billing_chargeback(&store, &file, &client, period),
     };
 
     match resultado {

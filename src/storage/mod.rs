@@ -327,6 +327,11 @@ pub trait Store {
         project: Option<&str>,
     ) -> Result<Vec<NotaDeMemoria>>;
 
+    /// Marca `nota_id` como substituída por `superseded_by` -- nunca
+    /// altera `texto`/`rationale`/`categoria` da nota original (D-14,
+    /// continuity/memory-supersede).
+    fn marcar_superseded(&self, nota_id: &str, superseded_by: &str) -> Result<()>;
+
     /// Grava o registro do run. Chamado antes de qualquer efeito colateral —
     /// D-12, design.md: "Run persistido antes de qualquer efeito colateral".
     fn criar_run(&self, novo: NovoRun) -> Result<RunRegistrado>;

@@ -31,6 +31,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (6, include_str!("migrations/0006_workflow.sql")),
     (7, include_str!("migrations/0007_comparacao.sql")),
     (8, include_str!("migrations/0008_experimento.sql")),
+    (9, include_str!("migrations/0009_memoria_supersede.sql")),
 ];
 
 pub struct SqliteStore {
@@ -769,7 +770,22 @@ impl Store for SqliteStore {
             texto: nova.texto,
             rationale: nova.rationale,
             created_at: nova.created_at,
+            superseded_by: None,
         })
+    }
+
+    fn marcar_superseded(&self, nota_id: &str, superseded_by: &str) -> Result<()> {
+        let alterado = self
+            .conn()
+            .execute(
+                "UPDATE memory_note SET superseded_by = ?1 WHERE id = ?2",
+                params![superseded_by, nota_id],
+            )
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        if alterado == 0 {
+            return Err(StorageError::NotFound(format!("nota {nota_id}")));
+        }
+        Ok(())
     }
 
     fn notas_do_contexto(
@@ -780,7 +796,7 @@ impl Store for SqliteStore {
         let conn = self.conn();
         let mut stmt = conn
             .prepare(
-                "SELECT id, client_id, project, categoria, texto, rationale, created_at
+                "SELECT id, client_id, project, categoria, texto, rationale, created_at, superseded_by
                  FROM memory_note
                  WHERE client_id = ?1 AND project IS ?2
                  ORDER BY created_at DESC",
@@ -1506,6 +1522,7 @@ fn row_to_nota(row: &Row) -> rusqlite::Result<NotaDeMemoria> {
         texto: row.get(4)?,
         rationale: row.get(5)?,
         created_at: Instante(row.get(6)?),
+        superseded_by: row.get(7)?,
     })
 }
 
@@ -2555,6 +2572,33 @@ mod tests {
         nota.rationale = Some("porque sim".into());
         let gravada = s.registrar_nota(nota).unwrap();
         assert_eq!(gravada.rationale.as_deref(), Some("porque sim"));
+    }
+
+    #[test]
+    fn marcar_superseded_de_nota_inexistente_e_notfound() {
+        let s = store();
+        let erro = s.marcar_superseded("fantasma", "n2").unwrap_err();
+        assert!(matches!(erro, StorageError::NotFound(_)));
+    }
+
+    #[test]
+    fn marcar_superseded_preserva_texto_rationale_e_categoria_originais() {
+        let s = store();
+        s.upsert_client("xpto").unwrap();
+        let mut nota = nova_nota("n1", "xpto", CategoriaNota::Decisao);
+        nota.rationale = Some("motivo original".into());
+        s.registrar_nota(nota).unwrap();
+        s.registrar_nota(nova_nota("n2", "xpto", CategoriaNota::Nota))
+            .unwrap();
+
+        s.marcar_superseded("n1", "n2").unwrap();
+
+        let notas = s.notas_do_contexto("xpto", Some("checkout-api")).unwrap();
+        let n1 = notas.iter().find(|n| n.id == "n1").unwrap();
+        assert_eq!(n1.texto, "texto de teste");
+        assert_eq!(n1.rationale.as_deref(), Some("motivo original"));
+        assert_eq!(n1.categoria, CategoriaNota::Decisao);
+        assert_eq!(n1.superseded_by.as_deref(), Some("n2"));
     }
 
     #[test]

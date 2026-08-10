@@ -357,6 +357,10 @@ pub struct NotaDeMemoria {
     /// "Decisão exige o porquê".
     pub rationale: Option<String>,
     pub created_at: Instante,
+    /// `Some(id)` da nota que substituiu esta -- preenchido uma única vez,
+    /// nunca editado depois (continuity/memory-supersede, D-14: a nota
+    /// original permanece intacta, só ganha o ponteiro).
+    pub superseded_by: Option<String>,
 }
 
 /// Um arquivo alterado no repositório do Context, como `git status` relatou —

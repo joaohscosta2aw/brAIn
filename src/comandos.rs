@@ -154,6 +154,10 @@ pub enum Comando {
     /// Orçamento mensal por cliente (capacity/budget-alerts, blueprint §45).
     #[command(subcommand)]
     Budget(ComandoBudget),
+    /// Chargeback: markup aplicado ao custo interno (capacity/chargeback,
+    /// blueprint §44).
+    #[command(subcommand)]
+    Billing(ComandoBilling),
 }
 
 #[derive(Subcommand)]
@@ -245,14 +249,37 @@ pub enum ComandoBudget {
 }
 
 #[derive(Subcommand)]
+pub enum ComandoBilling {
+    /// Custo interno e valor faturável (markup aplicado) de um cliente no
+    /// período — sempre mostra os dois lado a lado.
+    Chargeback {
+        #[arg(long)]
+        client: String,
+        /// Recorte `AAAA-MM`. Padrão: sem recorte (todo o histórico).
+        #[arg(long)]
+        period: Option<String>,
+        #[arg(long, default_value = "billing/clients.json")]
+        file: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum ComandoMemory {
     /// Registra uma nota simples.
-    Note { texto: String },
+    Note {
+        texto: String,
+        /// Id de uma nota anterior que esta substitui (continuity/memory-supersede).
+        #[arg(long)]
+        supersedes: Option<String>,
+    },
     /// Registra uma decisão com o motivo.
     Decide {
         texto: String,
         #[arg(long)]
         why: String,
+        /// Id de uma nota anterior que esta substitui (continuity/memory-supersede).
+        #[arg(long)]
+        supersedes: Option<String>,
     },
     /// Mostra exatamente o que seria anexado à tarefa de um `brian run`
     /// para o Context ativo (continuity/memory-recall).
@@ -745,6 +772,40 @@ fn formatar_status_budget(status: &crate::budget::StatusBudget) -> String {
     linhas.join("\n")
 }
 
+/// `brian billing chargeback --client <id>` — mesma fonte de dado de
+/// `brian costs --client` (`consumo_do_cliente` + `agregar`), markup
+/// aplicado via `billing::calcular_chargeback`.
+pub fn executar_billing_chargeback(
+    store: &dyn Store,
+    billing_path: &std::path::Path,
+    client_id: &str,
+    period: Option<String>,
+) -> Result<String, String> {
+    let existe = store.client_exists(client_id).map_err(|e| e.to_string())?;
+    if !existe {
+        return Err(format!("cliente '{client_id}' não existe"));
+    }
+
+    let periodo = match &period {
+        Some(p) => periodo_do_mes(p).ok_or_else(|| format!("período inválido: {p}"))?,
+        None => periodo_aberto(),
+    };
+    let registros = store
+        .consumo_do_cliente(client_id, periodo)
+        .map_err(|e| e.to_string())?;
+    let a = agregar(&registros);
+
+    let config = crate::billing::carregar_billing(billing_path).map_err(|e| e.to_string())?;
+    let relatorio = crate::billing::calcular_chargeback(
+        client_id,
+        config.get(client_id),
+        a.equivalente.map(Money),
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(crate::billing::formatar_chargeback(&relatorio))
+}
+
 // --- Capacidade (grupos 8/9) --------------------------------------------
 
 fn fmt_opt_percent(p: Option<f64>) -> String {
@@ -1184,18 +1245,20 @@ fn gerar_id_nota() -> String {
     format!("nota-{nanos}")
 }
 
-pub fn executar_memory_note(store: &dyn Store, texto: String) -> Result<String, String> {
+pub fn executar_memory_note(
+    store: &dyn Store,
+    texto: String,
+    supersedes: Option<String>,
+) -> Result<String, String> {
     let contexto = store.contexto_ativo().map_err(|e| e.to_string())?;
-    let nota = continuidade::registrar_nota(
+    let nota = registrar_ou_supersede(
         store,
         contexto.as_ref(),
-        gerar_id_nota(),
         CategoriaNota::Nota,
         texto,
         None,
-        Instante::agora(),
-    )
-    .map_err(|e| e.to_string())?;
+        supersedes,
+    )?;
     Ok(format!("nota registrada: {}", nota.id))
 }
 
@@ -1203,19 +1266,51 @@ pub fn executar_memory_decide(
     store: &dyn Store,
     texto: String,
     why: String,
+    supersedes: Option<String>,
 ) -> Result<String, String> {
     let contexto = store.contexto_ativo().map_err(|e| e.to_string())?;
-    let nota = continuidade::registrar_nota(
+    let nota = registrar_ou_supersede(
         store,
         contexto.as_ref(),
-        gerar_id_nota(),
         CategoriaNota::Decisao,
         texto,
         Some(why),
-        Instante::agora(),
-    )
-    .map_err(|e| e.to_string())?;
+        supersedes,
+    )?;
     Ok(format!("decisão registrada: {}", nota.id))
+}
+
+fn registrar_ou_supersede(
+    store: &dyn Store,
+    contexto: Option<&crate::domain::ContextoAtivo>,
+    categoria: CategoriaNota,
+    texto: String,
+    rationale: Option<String>,
+    supersedes: Option<String>,
+) -> Result<crate::domain::NotaDeMemoria, String> {
+    match supersedes {
+        Some(supersedes_id) => continuidade::supersede(
+            store,
+            contexto,
+            gerar_id_nota(),
+            categoria,
+            texto,
+            rationale,
+            &supersedes_id,
+            Instante::agora(),
+        )
+        .map_err(|e| e.to_string()),
+        None => continuidade::registrar_nota(
+            store,
+            contexto,
+            gerar_id_nota(),
+            categoria,
+            texto,
+            rationale,
+            Instante::agora(),
+        )
+        .map_err(|e| e.to_string()),
+    }
 }
 
 /// `brian memory recall` -- mesma função (`memoria::montar_recall`)
@@ -2841,6 +2936,86 @@ mod tests {
             montar_tarefa_com_recall(&s, contexto.as_ref(), "tarefa original").unwrap();
 
         assert!(tarefa_com_recall.ends_with(&recall_exibido));
+    }
+
+    #[test]
+    fn memory_note_com_supersedes_liga_a_nota_anterior() {
+        let s = store_com_contexto_ativo();
+        let anterior = executar_memory_note(&s, "nota antiga".into(), None).unwrap();
+        let anterior_id = anterior.strip_prefix("nota registrada: ").unwrap();
+
+        let saida =
+            executar_memory_note(&s, "nota nova".into(), Some(anterior_id.to_string())).unwrap();
+        let novo_id = saida.strip_prefix("nota registrada: ").unwrap();
+
+        let contexto = s.contexto_ativo().unwrap().unwrap();
+        let notas = s
+            .notas_do_contexto(&contexto.client_id, contexto.project.as_deref())
+            .unwrap();
+        let n = notas.iter().find(|n| n.id == anterior_id).unwrap();
+        assert_eq!(n.superseded_by.as_deref(), Some(novo_id));
+    }
+
+    #[test]
+    fn memory_decide_com_supersedes_liga_a_nota_anterior() {
+        let s = store_com_contexto_ativo();
+        let anterior =
+            executar_memory_decide(&s, "usar claude".into(), "mais barato".into(), None).unwrap();
+        let anterior_id = anterior.strip_prefix("decisão registrada: ").unwrap();
+
+        let saida = executar_memory_decide(
+            &s,
+            "usar codex".into(),
+            "claude ficou instável".into(),
+            Some(anterior_id.to_string()),
+        )
+        .unwrap();
+        let novo_id = saida.strip_prefix("decisão registrada: ").unwrap();
+
+        let contexto = s.contexto_ativo().unwrap().unwrap();
+        let notas = s
+            .notas_do_contexto(&contexto.client_id, contexto.project.as_deref())
+            .unwrap();
+        let n = notas.iter().find(|n| n.id == anterior_id).unwrap();
+        assert_eq!(n.superseded_by.as_deref(), Some(novo_id));
+    }
+
+    #[test]
+    fn billing_chargeback_de_cliente_inexistente_e_erro_claro() {
+        let s = crate::storage::sqlite::SqliteStore::open(":memory:").unwrap();
+        s.migrate().unwrap();
+        let erro =
+            executar_billing_chargeback(&s, std::path::Path::new("/nao/existe.json"), "xpto", None)
+                .unwrap_err();
+        assert!(erro.contains("xpto"));
+    }
+
+    #[test]
+    fn billing_chargeback_mostra_custo_interno_e_valor_faturavel() {
+        use crate::storage::NovoConsumo;
+        use crate::storage::test_util::novo_consumo;
+
+        let s = crate::storage::sqlite::SqliteStore::open(":memory:").unwrap();
+        s.migrate().unwrap();
+        s.upsert_client("xpto").unwrap();
+        s.gravar_consumo(NovoConsumo {
+            client_id: Some("xpto".into()),
+            custo_equivalente_api: Some(Money::de_unidades(100.0).unwrap()),
+            occurred_at: Instante::agora(),
+            ..novo_consumo("dedup-billing", "codex", "gpt")
+        })
+        .unwrap();
+
+        let dir = crate::testutil::dir_temporario_unico("billing-chargeback-cli");
+        std::fs::create_dir_all(&dir).unwrap();
+        let caminho = dir.join("clients.json");
+        std::fs::write(&caminho, r#"{"clients": {"xpto": {"markup": 1.6}}}"#).unwrap();
+
+        let saida = executar_billing_chargeback(&s, &caminho, "xpto", None).unwrap();
+        assert!(saida.contains("100.00"));
+        assert!(saida.contains("160.00"));
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
